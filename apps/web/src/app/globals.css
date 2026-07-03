@@ -758,6 +758,41 @@ select {
   gap: 20px;
 }
 
+.teacher-workspace {
+  display: grid;
+  gap: 20px;
+}
+
+.teacher-form-actions,
+.teacher-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.teacher-action-row {
+  justify-content: flex-start;
+}
+
+.teacher-assignment-form {
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+  padding-top: 14px;
+}
+
+.teacher-records-panel {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+
+.teacher-table-wrap {
+  max-height: 520px;
+}
+
+.teacher-table {
+  min-width: 900px;
+}
+
 .student-enrollment-form,
 .student-records-panel {
   min-width: 0;
@@ -1118,6 +1153,16 @@ select {
 .status-badge.active {
   background: #e5f4e9;
   color: var(--green);
+}
+
+.status-badge.inactive {
+  background: #eef1ed;
+  color: var(--muted);
+}
+
+.status-badge.suspended {
+  background: #fdecef;
+  color: var(--wine);
 }
 
 .module-grid {

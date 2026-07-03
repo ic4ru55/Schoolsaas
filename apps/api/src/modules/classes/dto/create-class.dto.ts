@@ -10,6 +10,10 @@ export class CreateClassDto {
   @IsString()
   levelId?: string;
 
+  @IsOptional()
+  @IsString()
+  mainTeacherId?: string;
+
   @ApiProperty({ example: "6eme A" })
   @IsString()
   @Length(1, 80)
@@ -25,4 +29,3 @@ export class CreateClassDto {
   @Min(1)
   capacity?: number;
 }
-

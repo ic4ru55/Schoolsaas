@@ -31,6 +31,7 @@ import {
   AcademicYear,
   activateAcademicYear,
   apiFileUrl,
+  assignMainTeacher,
   assignSubjectToClass,
   assignFeeItem,
   collectPayment,
@@ -41,6 +42,7 @@ import {
   createLevel,
   createStudent,
   createSubject,
+  createTeacher,
   deleteStudentDocument,
   deleteFeeItem,
   Establishment,
@@ -52,18 +54,21 @@ import {
   getStudentDocuments,
   getStudents,
   getSubjects,
+  getTeachers,
   Level,
   SchoolClass,
   Student,
   StudentDocument,
   studentDocumentFileUrl,
   Subject,
+  Teacher,
   PaymentRecord,
   PaymentsOverview,
   uploadEstablishmentAsset,
   uploadStudentDocument,
   updateFeeItem,
-  updateEstablishment
+  updateEstablishment,
+  updateTeacher
 } from "../lib/api";
 
 type AppView =
@@ -72,6 +77,7 @@ type AppView =
   | "structure"
   | "students"
   | "documents"
+  | "teachers"
   | "payments"
   | "grades"
   | "imports"
@@ -109,6 +115,7 @@ function emptyClassForm() {
     code: "",
     capacity: "",
     levelId: "",
+    mainTeacherId: "",
     tuitionEnabled: false,
     tuitionTranches: [
       { name: "Scolarite - tranche 1", amount: "", dueDate: "" },
@@ -152,6 +159,7 @@ const navGroups = [
     items: [
       { label: "Eleves", icon: GraduationCap, view: "students" },
       { label: "Documents", icon: FileText, view: "documents" },
+      { label: "Enseignants", icon: Users, view: "teachers" },
       { label: "Classes", icon: LibraryBig, view: "structure", submenu: structureTabs }
     ]
   },
@@ -273,6 +281,40 @@ function paymentMethodLabel(value: string) {
   return labels[value] ?? value;
 }
 
+function employmentTypeLabel(value: string) {
+  const labels: Record<string, string> = {
+    permanent: "Permanent",
+    vacataire: "Vacataire",
+    contractuel: "Contractuel",
+    stagiaire: "Stagiaire"
+  };
+  return labels[value] ?? value;
+}
+
+function teacherStatusLabel(value: string) {
+  const labels: Record<string, string> = {
+    active: "Actif",
+    inactive: "Inactif",
+    suspended: "Suspendu"
+  };
+  return labels[value] ?? value;
+}
+
+function teacherName(teacher?: Teacher | null) {
+  return teacher ? `${teacher.lastName} ${teacher.firstName}`.trim() : "";
+}
+
+function teacherAssignmentTexts(teacher: Teacher) {
+  const mainClasses =
+    teacher.mainClasses?.map((schoolClass) => `Titulaire : ${schoolClass.name}`) ?? [];
+  const classSubjects =
+    teacher.classSubjects?.map((classSubject) => {
+      return `${classSubject.class.name} - ${classSubject.subject.name}`;
+    }) ?? [];
+
+  return [...mainClasses, ...classSubjects];
+}
+
 function documentDisplayName(document: StudentDocument) {
   return document.label || document.originalName;
 }
@@ -336,9 +378,13 @@ export function SchoolDashboard() {
   const [levels, setLevels] = useState<Level[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [classes, setClasses] = useState<SchoolClass[]>([]);
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [studentSearch, setStudentSearch] = useState("");
   const [studentClassFilter, setStudentClassFilter] = useState("");
+  const [teacherSearch, setTeacherSearch] = useState("");
+  const [teacherSaving, setTeacherSaving] = useState(false);
+  const [editingTeacherId, setEditingTeacherId] = useState("");
   const [selectedDocumentStudentId, setSelectedDocumentStudentId] = useState("");
   const [studentDocuments, setStudentDocuments] = useState<StudentDocument[]>([]);
   const [form, setForm] = useState({
@@ -384,6 +430,26 @@ export function SchoolDashboard() {
   const [assignForm, setAssignForm] = useState({
     classId: "",
     subjectId: "",
+    teacherId: "",
+    coefficient: "1"
+  });
+  const [teacherForm, setTeacherForm] = useState({
+    firstName: "",
+    lastName: "",
+    phone: "",
+    email: "",
+    employmentType: "vacataire",
+    status: "active",
+    hourlyRate: ""
+  });
+  const [mainTeacherForm, setMainTeacherForm] = useState({
+    classId: "",
+    teacherId: ""
+  });
+  const [teachingAssignmentForm, setTeachingAssignmentForm] = useState({
+    classId: "",
+    subjectId: "",
+    teacherId: "",
     coefficient: "1"
   });
   const [studentForm, setStudentForm] = useState({
@@ -493,6 +559,39 @@ export function SchoolDashboard() {
       );
     });
   }, [studentClassFilter, studentSearch, students]);
+  const filteredTeachers = useMemo(() => {
+    const search = teacherSearch.trim().toLowerCase();
+    const filtered = teachers.filter((teacher) => {
+      if (!search) {
+        return true;
+      }
+
+      const searchable = [
+        teacher.firstName,
+        teacher.lastName,
+        teacher.phone ?? "",
+        teacher.email ?? "",
+        teacher.status,
+        employmentTypeLabel(teacher.employmentType),
+        teacherStatusLabel(teacher.status),
+        String(teacher.hourlyRate ?? 0),
+        ...teacherAssignmentTexts(teacher)
+      ]
+        .join(" - ")
+        .toLowerCase();
+
+      return searchable.includes(search);
+    });
+
+    return [...filtered].sort((left, right) => {
+      const statusOrder = left.status.localeCompare(right.status);
+      return (
+        statusOrder ||
+        left.lastName.localeCompare(right.lastName) ||
+        left.firstName.localeCompare(right.firstName)
+      );
+    });
+  }, [teacherSearch, teachers]);
   const studentClassStats = useMemo(() => {
     return activeClasses
       .map((schoolClass) => {
@@ -540,6 +639,7 @@ export function SchoolDashboard() {
 
     void loadDashboard(selectedId);
     void loadStructure(selectedId);
+    void loadTeachers(selectedId);
     void loadStudents(selectedId);
     void loadPayments(selectedId);
   }, [selectedId]);
@@ -640,6 +740,15 @@ export function SchoolDashboard() {
       setClasses(classesData);
     } catch {
       setAlerts(["Impossible de charger la structure scolaire. Verifier l'API."]);
+    }
+  }
+
+  async function loadTeachers(establishmentId: string) {
+    try {
+      const data = await getTeachers(establishmentId);
+      setTeachers(data);
+    } catch {
+      setAlerts(["Impossible de charger les enseignants. Verifier l'API."]);
     }
   }
 
@@ -828,6 +937,7 @@ export function SchoolDashboard() {
     setSelectedId(establishmentId);
     await loadDashboard(establishmentId);
     await loadStructure(establishmentId);
+    await loadTeachers(establishmentId);
     await loadStudents(establishmentId);
   }
 
@@ -905,6 +1015,7 @@ export function SchoolDashboard() {
       const createdClass = await createClass(selected.id, {
         academicYearId: activeYear.id,
         levelId: classForm.levelId || undefined,
+        mainTeacherId: classForm.mainTeacherId || undefined,
         name: classForm.name,
         code: classForm.code,
         capacity: classForm.capacity ? Number(classForm.capacity) : undefined
@@ -946,15 +1057,184 @@ export function SchoolDashboard() {
     try {
       await assignSubjectToClass(selected.id, assignForm.classId, {
         subjectId: assignForm.subjectId,
+        teacherId: assignForm.teacherId || undefined,
         coefficient: Number(assignForm.coefficient || 1)
       });
-      setAssignForm({ classId: "", subjectId: "", coefficient: "1" });
+      setAssignForm({ classId: "", subjectId: "", teacherId: "", coefficient: "1" });
       await loadStructure(selected.id);
+      await loadTeachers(selected.id);
       setAlerts(["Matiere affectee a la classe avec son coefficient."]);
     } catch (error) {
       setAlerts([errorMessage(error, "Affectation impossible.")]);
     } finally {
       setStructureSaving(false);
+    }
+  }
+
+  function resetTeacherForm() {
+    setEditingTeacherId("");
+    setTeacherForm({
+      firstName: "",
+      lastName: "",
+      phone: "",
+      email: "",
+      employmentType: "vacataire",
+      status: "active",
+      hourlyRate: ""
+    });
+  }
+
+  function handleEditTeacher(teacher: Teacher) {
+    setEditingTeacherId(teacher.id);
+    setTeacherForm({
+      firstName: teacher.firstName,
+      lastName: teacher.lastName,
+      phone: teacher.phone ?? "",
+      email: teacher.email ?? "",
+      employmentType: teacher.employmentType || "vacataire",
+      status: teacher.status || "active",
+      hourlyRate: teacher.hourlyRate ? String(teacher.hourlyRate) : ""
+    });
+  }
+
+  async function handleSaveTeacher(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) {
+      setAlerts(["Creer ou selectionner un etablissement avant d'ajouter un enseignant."]);
+      return;
+    }
+
+    if (!isValidPhone(teacherForm.phone)) {
+      setAlerts(["Le telephone de l'enseignant doit contenir exactement 8 chiffres."]);
+      return;
+    }
+
+    if (!isValidEmail(teacherForm.email)) {
+      setAlerts(["L'email de l'enseignant doit etre complet, par exemple prof@ecole.bf."]);
+      return;
+    }
+
+    const hourlyRate = teacherForm.hourlyRate ? Number(teacherForm.hourlyRate) : 0;
+    if (!Number.isFinite(hourlyRate) || hourlyRate < 0) {
+      setAlerts(["Le salaire par heure doit etre un montant positif ou zero."]);
+      return;
+    }
+
+    setTeacherSaving(true);
+    try {
+      const wasEditing = Boolean(editingTeacherId);
+      const payload = {
+        firstName: teacherForm.firstName.trim(),
+        lastName: teacherForm.lastName.trim(),
+        phone: teacherForm.phone,
+        email: teacherForm.email.trim(),
+        employmentType: teacherForm.employmentType,
+        status: teacherForm.status,
+        hourlyRate
+      };
+
+      if (editingTeacherId) {
+        await updateTeacher(selected.id, editingTeacherId, payload);
+      } else {
+        await createTeacher(selected.id, payload);
+      }
+
+      resetTeacherForm();
+      await loadTeachers(selected.id);
+      await loadDashboard(selected.id);
+      setAlerts([
+        wasEditing
+          ? "Enseignant modifie avec ses informations de paie."
+          : "Enseignant ajoute. Vous pouvez maintenant l'affecter aux classes et matieres."
+      ]);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Enregistrement de l'enseignant impossible.")]);
+    } finally {
+      setTeacherSaving(false);
+    }
+  }
+
+  async function handleTeacherStatus(teacher: Teacher, status: "active" | "inactive" | "suspended") {
+    if (!selected) {
+      return;
+    }
+
+    setTeacherSaving(true);
+    try {
+      await updateTeacher(selected.id, teacher.id, { status });
+      await loadTeachers(selected.id);
+      setAlerts([`Statut de ${teacherName(teacher)} mis a jour : ${teacherStatusLabel(status)}.`]);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Mise a jour du statut impossible.")]);
+    } finally {
+      setTeacherSaving(false);
+    }
+  }
+
+  async function handleAssignMainTeacher(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) {
+      return;
+    }
+
+    if (!mainTeacherForm.classId) {
+      setAlerts(["Choisir une classe avant d'affecter le titulaire."]);
+      return;
+    }
+
+    setTeacherSaving(true);
+    try {
+      await assignMainTeacher(selected.id, mainTeacherForm.classId, {
+        teacherId: mainTeacherForm.teacherId || undefined
+      });
+      setMainTeacherForm({ classId: "", teacherId: "" });
+      await loadStructure(selected.id);
+      await loadTeachers(selected.id);
+      setAlerts(["Titulaire de classe mis a jour."]);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Affectation du titulaire impossible.")]);
+    } finally {
+      setTeacherSaving(false);
+    }
+  }
+
+  async function handleAssignTeaching(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) {
+      return;
+    }
+
+    if (!teachingAssignmentForm.classId || !teachingAssignmentForm.subjectId || !teachingAssignmentForm.teacherId) {
+      setAlerts(["Choisir la classe, la matiere et l'enseignant avant d'affecter."]);
+      return;
+    }
+
+    const coefficient = Number(teachingAssignmentForm.coefficient || 1);
+    if (!Number.isFinite(coefficient) || coefficient < 0) {
+      setAlerts(["Le coefficient doit etre positif ou zero."]);
+      return;
+    }
+
+    setTeacherSaving(true);
+    try {
+      await assignSubjectToClass(selected.id, teachingAssignmentForm.classId, {
+        subjectId: teachingAssignmentForm.subjectId,
+        teacherId: teachingAssignmentForm.teacherId,
+        coefficient
+      });
+      setTeachingAssignmentForm({
+        classId: teachingAssignmentForm.classId,
+        subjectId: "",
+        teacherId: "",
+        coefficient: "1"
+      });
+      await loadStructure(selected.id);
+      await loadTeachers(selected.id);
+      setAlerts(["Enseignant affecte a la matiere pour cette classe."]);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Affectation de l'enseignant impossible.")]);
+    } finally {
+      setTeacherSaving(false);
     }
   }
 
@@ -2144,6 +2424,25 @@ export function SchoolDashboard() {
                       />
                     </label>
                     <label className="field full">
+                      <span>Titulaire</span>
+                      <select
+                        disabled={!selected || !activeYear || !teachers.length}
+                        value={classForm.mainTeacherId}
+                        onChange={(event) =>
+                          setClassForm({ ...classForm, mainTeacherId: event.target.value })
+                        }
+                      >
+                        <option value="">
+                          {teachers.length ? "Aucun titulaire" : "Ajouter un enseignant d'abord"}
+                        </option>
+                        {teachers.map((teacher) => (
+                          <option key={teacher.id} value={teacher.id}>
+                            {teacherName(teacher)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field full">
                       <span>Capacite</span>
                       <input
                         disabled={!selected || !activeYear}
@@ -2261,7 +2560,9 @@ export function SchoolDashboard() {
                     items={classes.map((schoolClass) => ({
                       id: schoolClass.id,
                       title: schoolClass.name,
-                      detail: `${schoolClass.level?.name ?? "Sans niveau"} - ${schoolClass.classSubjects?.length ?? 0} matiere(s)`
+                      detail: `${schoolClass.level?.name ?? "Sans niveau"} - ${schoolClass.classSubjects?.length ?? 0} matiere(s)${
+                        schoolClass.mainTeacher ? ` - Titulaire : ${teacherName(schoolClass.mainTeacher)}` : ""
+                      }`
                     }))}
                   />
                 </form>
@@ -2307,6 +2608,21 @@ export function SchoolDashboard() {
                       </select>
                     </label>
                     <label className="field full">
+                      <span>Enseignant</span>
+                      <select
+                        disabled={!selected || !teachers.length}
+                        value={assignForm.teacherId}
+                        onChange={(event) => setAssignForm({ ...assignForm, teacherId: event.target.value })}
+                      >
+                        <option value="">Non affecte</option>
+                        {teachers.map((teacher) => (
+                          <option key={teacher.id} value={teacher.id}>
+                            {teacherName(teacher)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field full">
                       <span className="required">Coefficient</span>
                       <input
                         disabled={!selected}
@@ -2327,6 +2643,404 @@ export function SchoolDashboard() {
                   </div>
                 </form>
                 ) : null}
+              </div>
+            </div>
+            ) : null}
+
+            {activeView === "teachers" ? (
+            <div className="panel">
+              <div className="panel-header">
+                <div>
+                  <h2>Enseignants</h2>
+                  <span>Fiche, taux horaire et affectations multiples</span>
+                </div>
+                <Users size={20} />
+              </div>
+
+              {alerts.length ? (
+                <div className="inline-alerts">
+                  {alerts.map((alert) => (
+                    <div className="alert-item" key={alert}>
+                      <AlertTriangle size={18} />
+                      <span>{alert}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              <div className="teacher-workspace">
+                <form className="settings-block" onSubmit={handleSaveTeacher}>
+                  <div className="section-title">
+                    <strong>{editingTeacherId ? "Modifier l'enseignant" : "Nouvel enseignant"}</strong>
+                    <span>Salaire horaire et contact</span>
+                  </div>
+                  <div className="setup-form">
+                    <label className="field">
+                      <span className="required">Prenom</span>
+                      <input
+                        disabled={!selected || teacherSaving}
+                        minLength={2}
+                        placeholder="Exemple : Moussa"
+                        required
+                        value={teacherForm.firstName}
+                        onChange={(event) =>
+                          setTeacherForm({ ...teacherForm, firstName: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="required">Nom</span>
+                      <input
+                        disabled={!selected || teacherSaving}
+                        minLength={2}
+                        placeholder="Exemple : Ouedraogo"
+                        required
+                        value={teacherForm.lastName}
+                        onChange={(event) =>
+                          setTeacherForm({ ...teacherForm, lastName: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Telephone</span>
+                      <input
+                        disabled={!selected || teacherSaving}
+                        inputMode="numeric"
+                        maxLength={8}
+                        pattern="[0-9]{8}"
+                        placeholder="Exemple : 72007342"
+                        value={teacherForm.phone}
+                        onChange={(event) =>
+                          setTeacherForm({ ...teacherForm, phone: cleanPhone(event.target.value) })
+                        }
+                      />
+                      <small>8 chiffres exactement si renseigne.</small>
+                    </label>
+                    <label className="field">
+                      <span>Email</span>
+                      <input
+                        disabled={!selected || teacherSaving}
+                        pattern="^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$"
+                        placeholder="Exemple : prof@ecole.bf"
+                        type="email"
+                        value={teacherForm.email}
+                        onChange={(event) =>
+                          setTeacherForm({ ...teacherForm, email: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="required">Type</span>
+                      <select
+                        disabled={!selected || teacherSaving}
+                        value={teacherForm.employmentType}
+                        onChange={(event) =>
+                          setTeacherForm({ ...teacherForm, employmentType: event.target.value })
+                        }
+                      >
+                        <option value="vacataire">Vacataire</option>
+                        <option value="permanent">Permanent</option>
+                        <option value="contractuel">Contractuel</option>
+                        <option value="stagiaire">Stagiaire</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span className="required">Statut</span>
+                      <select
+                        disabled={!selected || teacherSaving}
+                        value={teacherForm.status}
+                        onChange={(event) =>
+                          setTeacherForm({ ...teacherForm, status: event.target.value })
+                        }
+                      >
+                        <option value="active">Actif</option>
+                        <option value="inactive">Inactif</option>
+                        <option value="suspended">Suspendu</option>
+                      </select>
+                    </label>
+                    <label className="field full">
+                      <span>Salaire par heure</span>
+                      <input
+                        disabled={!selected || teacherSaving}
+                        min={0}
+                        placeholder="Exemple : 2500"
+                        step={1}
+                        type="number"
+                        value={teacherForm.hourlyRate}
+                        onChange={(event) =>
+                          setTeacherForm({ ...teacherForm, hourlyRate: event.target.value })
+                        }
+                      />
+                      <small>Montant horaire visible dans la recherche et la liste.</small>
+                    </label>
+                    <div className="teacher-form-actions field full">
+                      <button className="primary-button" disabled={!selected || teacherSaving} type="submit">
+                        {teacherSaving ? <Loader2 size={17} /> : <Save size={17} />}
+                        {editingTeacherId ? "Modifier" : "Enregistrer"}
+                      </button>
+                      {editingTeacherId ? (
+                        <button className="ghost-button" disabled={teacherSaving} type="button" onClick={resetTeacherForm}>
+                          Annuler
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                </form>
+
+                <div className="settings-block">
+                  <div className="section-title">
+                    <strong>Affectations</strong>
+                    <span>Un enseignant peut prendre plusieurs classes</span>
+                  </div>
+                  <form className="setup-form" onSubmit={handleAssignMainTeacher}>
+                    <div className="section-title compact field full">
+                      <strong>Titulaire de classe</strong>
+                      <span>Responsable principal d'une classe</span>
+                    </div>
+                    <label className="field">
+                      <span className="required">Classe</span>
+                      <select
+                        disabled={!selected || !classes.length || teacherSaving}
+                        required
+                        value={mainTeacherForm.classId}
+                        onChange={(event) =>
+                          setMainTeacherForm({ ...mainTeacherForm, classId: event.target.value })
+                        }
+                      >
+                        <option value="">Choisir une classe</option>
+                        {classes.map((schoolClass) => (
+                          <option key={schoolClass.id} value={schoolClass.id}>
+                            {schoolClass.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Enseignant</span>
+                      <select
+                        disabled={!selected || !teachers.length || teacherSaving}
+                        value={mainTeacherForm.teacherId}
+                        onChange={(event) =>
+                          setMainTeacherForm({ ...mainTeacherForm, teacherId: event.target.value })
+                        }
+                      >
+                        <option value="">Aucun titulaire</option>
+                        {teachers.map((teacher) => (
+                          <option key={teacher.id} value={teacher.id}>
+                            {teacherName(teacher)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button className="primary-button field full" disabled={!selected || teacherSaving} type="submit">
+                      {teacherSaving ? <Loader2 size={17} /> : <Save size={17} />}
+                      Affecter le titulaire
+                    </button>
+                  </form>
+
+                  <form className="setup-form teacher-assignment-form" onSubmit={handleAssignTeaching}>
+                    <div className="section-title compact field full">
+                      <strong>Matiere enseignee</strong>
+                      <span>Affectation classe + matiere + coefficient</span>
+                    </div>
+                    <label className="field">
+                      <span className="required">Classe</span>
+                      <select
+                        disabled={!selected || !classes.length || teacherSaving}
+                        required
+                        value={teachingAssignmentForm.classId}
+                        onChange={(event) =>
+                          setTeachingAssignmentForm({
+                            ...teachingAssignmentForm,
+                            classId: event.target.value
+                          })
+                        }
+                      >
+                        <option value="">Choisir une classe</option>
+                        {classes.map((schoolClass) => (
+                          <option key={schoolClass.id} value={schoolClass.id}>
+                            {schoolClass.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span className="required">Matiere</span>
+                      <select
+                        disabled={!selected || !subjects.length || teacherSaving}
+                        required
+                        value={teachingAssignmentForm.subjectId}
+                        onChange={(event) =>
+                          setTeachingAssignmentForm({
+                            ...teachingAssignmentForm,
+                            subjectId: event.target.value
+                          })
+                        }
+                      >
+                        <option value="">Choisir une matiere</option>
+                        {subjects.map((subject) => (
+                          <option key={subject.id} value={subject.id}>
+                            {subject.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span className="required">Enseignant</span>
+                      <select
+                        disabled={!selected || !teachers.length || teacherSaving}
+                        required
+                        value={teachingAssignmentForm.teacherId}
+                        onChange={(event) =>
+                          setTeachingAssignmentForm({
+                            ...teachingAssignmentForm,
+                            teacherId: event.target.value
+                          })
+                        }
+                      >
+                        <option value="">Choisir un enseignant</option>
+                        {teachers.map((teacher) => (
+                          <option key={teacher.id} value={teacher.id}>
+                            {teacherName(teacher)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span className="required">Coefficient</span>
+                      <input
+                        disabled={!selected || teacherSaving}
+                        min={0}
+                        required
+                        step="0.25"
+                        type="number"
+                        value={teachingAssignmentForm.coefficient}
+                        onChange={(event) =>
+                          setTeachingAssignmentForm({
+                            ...teachingAssignmentForm,
+                            coefficient: event.target.value
+                          })
+                        }
+                      />
+                    </label>
+                    <button className="primary-button field full" disabled={!selected || teacherSaving} type="submit">
+                      {teacherSaving ? <Loader2 size={17} /> : <Plus size={17} />}
+                      Affecter a la matiere
+                    </button>
+                  </form>
+                </div>
+
+                <div className="settings-block teacher-records-panel">
+                  <div className="section-title">
+                    <strong>Liste des enseignants</strong>
+                    <span>{filteredTeachers.length} dossier(s)</span>
+                  </div>
+                  <label className="field">
+                    <span>Recherche</span>
+                    <input
+                      list="teacher-search-suggestions"
+                      placeholder="Nom, telephone, taux horaire, classe ou matiere"
+                      value={teacherSearch}
+                      onChange={(event) => setTeacherSearch(event.target.value)}
+                    />
+                    <datalist id="teacher-search-suggestions">
+                      {teachers.map((teacher) => (
+                        <option
+                          key={teacher.id}
+                          value={`${teacherName(teacher)} - ${formatMoney(teacher.hourlyRate ?? 0, selected?.currency)}/h`}
+                        />
+                      ))}
+                    </datalist>
+                  </label>
+                  <div className="student-table-wrap teacher-table-wrap">
+                    {filteredTeachers.length ? (
+                      <table className="student-table teacher-table">
+                        <thead>
+                          <tr>
+                            <th>Enseignant</th>
+                            <th>Contact</th>
+                            <th>Paie</th>
+                            <th>Affectations</th>
+                            <th>Statut</th>
+                            <th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredTeachers.map((teacher) => {
+                            const assignments = teacherAssignmentTexts(teacher);
+                            return (
+                              <tr key={teacher.id}>
+                                <td>
+                                  <strong>{teacherName(teacher)}</strong>
+                                  <span>{employmentTypeLabel(teacher.employmentType)}</span>
+                                </td>
+                                <td>
+                                  <strong>{teacher.phone || "Telephone non renseigne"}</strong>
+                                  <span>{teacher.email || "Email non renseigne"}</span>
+                                </td>
+                                <td>
+                                  <strong>{formatMoney(teacher.hourlyRate ?? 0, selected?.currency)}</strong>
+                                  <span>Par heure</span>
+                                </td>
+                                <td>
+                                  {assignments.length ? (
+                                    <>
+                                      {assignments.slice(0, 3).map((assignment) => (
+                                        <span key={assignment}>{assignment}</span>
+                                      ))}
+                                      {assignments.length > 3 ? (
+                                        <span>+ {assignments.length - 3} autre(s)</span>
+                                      ) : null}
+                                    </>
+                                  ) : (
+                                    <span>Aucune affectation</span>
+                                  )}
+                                </td>
+                                <td>
+                                  <span className={`status-badge ${teacher.status}`}>
+                                    {teacherStatusLabel(teacher.status)}
+                                  </span>
+                                </td>
+                                <td>
+                                  <div className="teacher-action-row">
+                                    <button
+                                      className="ghost-button small"
+                                      type="button"
+                                      onClick={() => handleEditTeacher(teacher)}
+                                    >
+                                      Modifier
+                                    </button>
+                                    {teacher.status === "active" ? (
+                                      <button
+                                        className="ghost-button small danger-button"
+                                        disabled={teacherSaving}
+                                        type="button"
+                                        onClick={() => void handleTeacherStatus(teacher, "suspended")}
+                                      >
+                                        Suspendre
+                                      </button>
+                                    ) : (
+                                      <button
+                                        className="ghost-button small"
+                                        disabled={teacherSaving}
+                                        type="button"
+                                        onClick={() => void handleTeacherStatus(teacher, "active")}
+                                      >
+                                        Activer
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div className="empty-state compact">Aucun enseignant trouve.</div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
             ) : null}
@@ -3415,6 +4129,7 @@ export function SchoolDashboard() {
             activeView !== "structure" &&
             activeView !== "students" &&
             activeView !== "documents" &&
+            activeView !== "teachers" &&
             activeView !== "payments" ? (
               <ComingSoonView view={activeView} />
             ) : null}
@@ -3801,7 +4516,7 @@ function ComingSoonView({ view }: { view: AppView }) {
   const labels: Record<
     Exclude<
       AppView,
-      "dashboard" | "settings" | "structure" | "students" | "documents" | "payments"
+      "dashboard" | "settings" | "structure" | "students" | "documents" | "teachers" | "payments"
     >,
     { title: string; detail: string }
   > = {
@@ -3827,7 +4542,7 @@ function ComingSoonView({ view }: { view: AppView }) {
     labels[
       view as Exclude<
         AppView,
-        "dashboard" | "settings" | "structure" | "students" | "documents" | "payments"
+        "dashboard" | "settings" | "structure" | "students" | "documents" | "teachers" | "payments"
       >
     ];
 

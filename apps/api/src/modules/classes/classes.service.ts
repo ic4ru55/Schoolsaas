@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { AssignMainTeacherDto } from "./dto/assign-main-teacher.dto";
 import { CreateClassDto } from "./dto/create-class.dto";
 
 @Injectable()
@@ -12,9 +13,11 @@ export class ClassesService {
       include: {
         academicYear: true,
         level: true,
+        mainTeacher: true,
         classSubjects: {
           include: {
-            subject: true
+            subject: true,
+            teacher: true
           },
           orderBy: {
             subject: {
@@ -46,11 +49,22 @@ export class ClassesService {
       }
     }
 
+    if (dto.mainTeacherId) {
+      const teacher = await this.prisma.teacher.findFirst({
+        where: { id: dto.mainTeacherId, establishmentId }
+      });
+
+      if (!teacher) {
+        throw new BadRequestException("L'enseignant titulaire indique est introuvable.");
+      }
+    }
+
     return this.prisma.schoolClass.create({
       data: {
         establishmentId,
         academicYearId: dto.academicYearId,
         levelId: dto.levelId,
+        mainTeacherId: dto.mainTeacherId,
         name: dto.name,
         code: dto.code,
         capacity: dto.capacity
@@ -58,13 +72,56 @@ export class ClassesService {
       include: {
         academicYear: true,
         level: true,
+        mainTeacher: true,
         classSubjects: {
           include: {
-            subject: true
+            subject: true,
+            teacher: true
+          }
+        }
+      }
+    });
+  }
+
+  async assignMainTeacher(
+    establishmentId: string,
+    classId: string,
+    dto: AssignMainTeacherDto
+  ) {
+    const schoolClass = await this.prisma.schoolClass.findFirst({
+      where: { id: classId, establishmentId }
+    });
+
+    if (!schoolClass) {
+      throw new BadRequestException("La classe indiquee est introuvable.");
+    }
+
+    if (dto.teacherId) {
+      const teacher = await this.prisma.teacher.findFirst({
+        where: { id: dto.teacherId, establishmentId }
+      });
+
+      if (!teacher) {
+        throw new BadRequestException("L'enseignant indique est introuvable.");
+      }
+    }
+
+    return this.prisma.schoolClass.update({
+      where: { id: classId },
+      data: {
+        mainTeacherId: dto.teacherId || null
+      },
+      include: {
+        academicYear: true,
+        level: true,
+        mainTeacher: true,
+        classSubjects: {
+          include: {
+            subject: true,
+            teacher: true
           }
         }
       }
     });
   }
 }
-

@@ -166,7 +166,8 @@ Etat actuel :
 - creation matieres : ajoutee ;
 - creation classes pour l'annee active : ajoutee ;
 - affectation matiere a classe avec coefficient : ajoutee ;
-- affectation enseignants aux matieres/classes : pas encore fait.
+- enseignants avec taux horaire : ajoute ;
+- affectation enseignants aux matieres/classes : ajoutee.
 
 ## Etape 3 - Eleves et parents
 

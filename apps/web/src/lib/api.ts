@@ -54,14 +54,36 @@ export type SchoolClass = {
   establishmentId: string;
   academicYearId: string;
   levelId?: string | null;
+  mainTeacherId?: string | null;
   name: string;
   code?: string | null;
   capacity?: number | null;
   academicYear?: AcademicYear;
   level?: Level | null;
+  mainTeacher?: Teacher | null;
   classSubjects?: Array<{
     id: string;
     coefficient: string | number;
+    subject: Subject;
+    teacher?: Teacher | null;
+  }>;
+};
+
+export type Teacher = {
+  id: string;
+  establishmentId: string;
+  firstName: string;
+  lastName: string;
+  phone?: string | null;
+  email?: string | null;
+  status: "active" | "inactive" | "suspended" | string;
+  employmentType: "permanent" | "vacataire" | "contractuel" | "stagiaire" | string;
+  hourlyRate: number;
+  mainClasses?: SchoolClass[];
+  classSubjects?: Array<{
+    id: string;
+    coefficient: string | number;
+    class: SchoolClass;
     subject: Subject;
   }>;
 };
@@ -412,6 +434,7 @@ export function createClass(
   input: {
     academicYearId: string;
     levelId?: string;
+    mainTeacherId?: string;
     name: string;
     code?: string;
     capacity?: number;
@@ -428,12 +451,67 @@ export function assignSubjectToClass(
   classId: string,
   input: {
     subjectId: string;
+    teacherId?: string;
     coefficient?: number;
   }
 ) {
   return request(`/establishments/${establishmentId}/classes/${classId}/subjects`, {
     method: "POST",
     body: JSON.stringify(input)
+  });
+}
+
+export function assignMainTeacher(
+  establishmentId: string,
+  classId: string,
+  input: {
+    teacherId?: string;
+  }
+) {
+  return request<SchoolClass>(`/establishments/${establishmentId}/classes/${classId}/main-teacher`, {
+    method: "PATCH",
+    body: JSON.stringify(stripEmptyStrings(input))
+  });
+}
+
+export function getTeachers(establishmentId: string) {
+  return request<Teacher[]>(`/establishments/${establishmentId}/teachers`);
+}
+
+export function createTeacher(
+  establishmentId: string,
+  input: {
+    firstName: string;
+    lastName: string;
+    phone?: string;
+    email?: string;
+    employmentType?: string;
+    status?: string;
+    hourlyRate?: number;
+  }
+) {
+  return request<Teacher>(`/establishments/${establishmentId}/teachers`, {
+    method: "POST",
+    body: JSON.stringify(stripEmptyStrings(input))
+  });
+}
+
+export function updateTeacher(
+  establishmentId: string,
+  teacherId: string,
+  input: Partial<{
+    firstName: string;
+    lastName: string;
+    phone: string;
+    email: string;
+    employmentType: string;
+    status: string;
+    hourlyRate: number;
+  }>
+) {
+  return request<Teacher>(`/establishments/${establishmentId}/teachers/${teacherId}`, {
+    method: "PATCH",
+    body: JSON.stringify(stripEmptyStrings(input))
   });
 }
 

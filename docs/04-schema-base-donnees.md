@@ -251,6 +251,7 @@ Ce schema est volontairement global. Les migrations detaillees devront etre ecri
 - email
 - status
 - employment_type
+- hourly_rate
 - created_at
 - updated_at
 

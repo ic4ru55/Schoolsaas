@@ -12,5 +12,8 @@ export class AssignSubjectDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   coefficient?: number;
-}
 
+  @IsOptional()
+  @IsString()
+  teacherId?: string;
+}

@@ -11,6 +11,7 @@ import { PaymentsModule } from "./modules/payments/payments.module";
 import { PrismaModule } from "./modules/prisma/prisma.module";
 import { StudentsModule } from "./modules/students/students.module";
 import { SubjectsModule } from "./modules/subjects/subjects.module";
+import { TeachersModule } from "./modules/teachers/teachers.module";
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { SubjectsModule } from "./modules/subjects/subjects.module";
     LevelsModule,
     ClassesModule,
     SubjectsModule,
+    TeachersModule,
     StudentsModule,
     PaymentsModule
   ],

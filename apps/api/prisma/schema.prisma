@@ -404,6 +404,7 @@ model Teacher {
   email           String?
   status          String         @default("active")
   employmentType  String         @default("vacataire")
+  hourlyRate      Decimal        @default(0)
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
   establishment   Establishment  @relation(fields: [establishmentId], references: [id])

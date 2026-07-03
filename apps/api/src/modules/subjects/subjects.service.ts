@@ -46,6 +46,16 @@ export class SubjectsService {
       throw new BadRequestException("La matiere indiquee est introuvable.");
     }
 
+    if (dto.teacherId) {
+      const teacher = await this.prisma.teacher.findFirst({
+        where: { id: dto.teacherId, establishmentId }
+      });
+
+      if (!teacher) {
+        throw new BadRequestException("L'enseignant indique est introuvable.");
+      }
+    }
+
     return this.prisma.classSubject.upsert({
       where: {
         classId_subjectId: {
@@ -54,19 +64,21 @@ export class SubjectsService {
         }
       },
       update: {
-        coefficient: dto.coefficient ?? 1
+        coefficient: dto.coefficient ?? 1,
+        teacherId: dto.teacherId || null
       },
       create: {
         establishmentId,
         classId,
         subjectId: dto.subjectId,
+        teacherId: dto.teacherId,
         coefficient: dto.coefficient ?? 1
       },
       include: {
         class: true,
-        subject: true
+        subject: true,
+        teacher: true
       }
     });
   }
 }
-
