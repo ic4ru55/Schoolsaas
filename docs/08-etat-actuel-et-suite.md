@@ -141,7 +141,8 @@ Etat actuel :
 - modification informations etablissement : ajoutee ;
 - creation annee scolaire : ajoutee ;
 - activation annee scolaire unique : ajoutee ;
-- logo/cachet/signatures : pas encore fait ;
+- logo/cachet : ajoute ;
+- signatures : pas encore fait ;
 - roles par defaut appliques a la creation d'un nouvel etablissement : ajoute.
 
 ## Etape 2 - Structure scolaire
