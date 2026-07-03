@@ -139,6 +139,78 @@ export type StudentDocument = {
   createdAt: string;
 };
 
+export type StudentDossier = {
+  student: Student & {
+    photoUrl?: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
+  guardians: Student["guardians"];
+  cursus: Array<{
+    id: string;
+    academicYearId: string;
+    academicYearName: string;
+    classId: string;
+    className: string;
+    levelName?: string | null;
+    mainTeacherName?: string | null;
+    enrollmentType: "NEW" | "REENROLLMENT" | "TRANSFER";
+    status: "ACTIVE" | "CANCELLED" | "COMPLETED";
+    enrolledAt: string;
+  }>;
+  documents: StudentDocument[];
+  finances: {
+    totalDue: number;
+    paid: number;
+    balance: number;
+    assignments: Array<{
+      id: string;
+      academicYearId: string;
+      academicYearName: string;
+      feeName: string;
+      className?: string | null;
+      levelName?: string | null;
+      amountDue: number;
+      paid: number;
+      balance: number;
+      dueDate?: string | null;
+    }>;
+    payments: PaymentRecord[];
+  };
+  pedagogy: {
+    grades: Array<{
+      id: string;
+      score: number;
+      comment?: string | null;
+      validatedAt?: string | null;
+      createdAt: string;
+      assessmentName: string;
+      maxScore: number;
+      weight: number;
+      periodName: string;
+      academicYearId: string;
+      subjectName: string;
+      className: string;
+      teacherName?: string | null;
+    }>;
+    reportCards: Array<{
+      id: string;
+      academicYearId: string;
+      academicYearName?: string | null;
+      periodId: string;
+      periodName?: string | null;
+      classId: string;
+      className?: string | null;
+      average?: number | null;
+      rank?: number | null;
+      decision?: string | null;
+      pdfUrl?: string | null;
+      generatedBy?: string | null;
+      generatedAt: string;
+    }>;
+  };
+};
+
 export type DashboardSummary = {
   establishment: Establishment | null;
   metrics: {
@@ -560,6 +632,18 @@ export function updateStudent(
     method: "PATCH",
     body: JSON.stringify(stripEmptyStrings(input))
   });
+}
+
+export function getStudentDossier(establishmentId: string, studentId: string) {
+  return request<StudentDossier>(
+    `/establishments/${establishmentId}/students/${studentId}/dossier`
+  );
+}
+
+export function getStudentDossierByMatricule(establishmentId: string, matricule: string) {
+  return request<StudentDossier>(
+    `/establishments/${establishmentId}/students/dossier?matricule=${encodeURIComponent(matricule)}`
+  );
 }
 
 export function getStudentDocuments(establishmentId: string, studentId: string) {

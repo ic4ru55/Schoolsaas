@@ -192,12 +192,14 @@ Etat actuel :
 - liste des eleves : ajoutee ;
 - recherche par nom, matricule, classe et contact parent : ajoutee ;
 - matricule automatique selon le format de l'etablissement : ajoute ;
+- dossier central consultable par matricule : ajoute ;
 - creation eleve avec inscription dans une classe : ajoutee ;
 - modification du dossier eleve : ajoutee ;
 - actions de statut eleve : ajoutees ;
 - parents/tuteurs principal et secondaire : ajoute ;
 - liaison eleve-parent : ajoutee ;
 - documents administratifs scannes : ajoutes dans un onglet separe.
+- cursus, documents, paiements, notes et bulletins prevus comme historique durable du dossier eleve.
 
 ## Etape 4 - Paiements
 

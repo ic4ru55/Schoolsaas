@@ -26,6 +26,14 @@ export class StudentsController {
     return this.studentsService.create(establishmentId, dto);
   }
 
+  @Get("dossier")
+  findDossierByMatricule(
+    @Param("establishmentId") establishmentId: string,
+    @Query("matricule") matricule?: string
+  ) {
+    return this.studentsService.findDossierByMatricule(establishmentId, matricule);
+  }
+
   @Patch(":studentId")
   update(
     @Param("establishmentId") establishmentId: string,
@@ -33,6 +41,14 @@ export class StudentsController {
     @Body() dto: UpdateStudentDto
   ) {
     return this.studentsService.update(establishmentId, studentId, dto);
+  }
+
+  @Get(":studentId/dossier")
+  findDossier(
+    @Param("establishmentId") establishmentId: string,
+    @Param("studentId") studentId: string
+  ) {
+    return this.studentsService.findDossier(establishmentId, studentId);
   }
 
   @Get(":studentId/documents")

@@ -51,6 +51,8 @@ import {
   getEstablishments,
   getLevels,
   getPaymentsOverview,
+  getStudentDossier,
+  getStudentDossierByMatricule,
   getStudentDocuments,
   getStudents,
   getSubjects,
@@ -58,6 +60,7 @@ import {
   Level,
   SchoolClass,
   Student,
+  StudentDossier,
   StudentDocument,
   studentDocumentFileUrl,
   Subject,
@@ -432,6 +435,9 @@ export function SchoolDashboard() {
   const [editingTeacherId, setEditingTeacherId] = useState("");
   const [selectedDocumentStudentId, setSelectedDocumentStudentId] = useState("");
   const [studentDocuments, setStudentDocuments] = useState<StudentDocument[]>([]);
+  const [selectedDossierStudentId, setSelectedDossierStudentId] = useState("");
+  const [studentDossier, setStudentDossier] = useState<StudentDossier | null>(null);
+  const [studentDossierLoading, setStudentDossierLoading] = useState(false);
   const [form, setForm] = useState({
     name: "",
     type: "HIGH_SCHOOL",
@@ -675,6 +681,8 @@ export function SchoolDashboard() {
       return;
     }
 
+    setStudentDossier(null);
+    setSelectedDossierStudentId("");
     void loadDashboard(selectedId);
     void loadStructure(selectedId);
     void loadTeachers(selectedId);
@@ -815,6 +823,45 @@ export function SchoolDashboard() {
       setStudentDocuments(data);
     } catch {
       setAlerts(["Impossible de charger les documents de cet eleve."]);
+    }
+  }
+
+  async function loadStudentDossier(establishmentId: string, studentId: string) {
+    setStudentDossierLoading(true);
+    try {
+      const data = await getStudentDossier(establishmentId, studentId);
+      setStudentDossier(data);
+      setSelectedDossierStudentId(data.student.id);
+    } catch (error) {
+      setStudentDossier(null);
+      setAlerts([errorMessage(error, "Impossible de charger le dossier central de cet eleve.")]);
+    } finally {
+      setStudentDossierLoading(false);
+    }
+  }
+
+  async function openStudentDossierBySearch() {
+    if (!selected) {
+      return;
+    }
+
+    const matricule = studentSearch.split(" - ")[0]?.trim();
+    if (!matricule) {
+      setAlerts(["Saisir ou choisir un matricule avant d'ouvrir le dossier."]);
+      return;
+    }
+
+    setStudentDossierLoading(true);
+    try {
+      const data = await getStudentDossierByMatricule(selected.id, matricule);
+      setStudentDossier(data);
+      setSelectedDossierStudentId(data.student.id);
+      setAlerts([`Dossier central charge : ${data.student.matricule}.`]);
+    } catch (error) {
+      setStudentDossier(null);
+      setAlerts([errorMessage(error, "Aucun dossier trouve avec ce matricule.")]);
+    } finally {
+      setStudentDossierLoading(false);
     }
   }
 
@@ -3378,7 +3425,7 @@ export function SchoolDashboard() {
                     <strong>Liste des eleves</strong>
                     <span>{filteredStudents.length} dossier(s)</span>
                   </div>
-                  <div className="student-list-tools">
+                  <div className="student-list-tools with-action">
                     <label className="field">
                       <span>Recherche</span>
                       <input
@@ -3410,6 +3457,15 @@ export function SchoolDashboard() {
                         ))}
                       </select>
                     </label>
+                    <button
+                      className="ghost-button student-dossier-search-button"
+                      disabled={!selected || studentDossierLoading || !studentSearch.trim()}
+                      type="button"
+                      onClick={() => void openStudentDossierBySearch()}
+                    >
+                      {studentDossierLoading ? <Loader2 size={16} /> : <Eye size={16} />}
+                      Ouvrir dossier
+                    </button>
                   </div>
                   <div className="student-table-wrap">
                     {filteredStudents.length ? (
@@ -3431,7 +3487,10 @@ export function SchoolDashboard() {
                             const primaryGuardian =
                               student.guardians?.find((item) => item.isPrimary) ?? student.guardians?.[0];
                             return (
-                              <tr key={student.id}>
+                              <tr
+                                className={selectedDossierStudentId === student.id ? "selected" : ""}
+                                key={student.id}
+                              >
                                 <td>
                                   <strong>{student.matricule}</strong>
                                 </td>
@@ -3470,6 +3529,14 @@ export function SchoolDashboard() {
                                     >
                                       Modifier
                                     </button>
+                                    <button
+                                      className="ghost-button small"
+                                      disabled={!selected || studentDossierLoading}
+                                      type="button"
+                                      onClick={() => selected && void loadStudentDossier(selected.id, student.id)}
+                                    >
+                                      Dossier
+                                    </button>
                                     {student.status === "ACTIVE" ? (
                                       <button
                                         className="ghost-button small danger-button"
@@ -3500,6 +3567,152 @@ export function SchoolDashboard() {
                       <div className="empty-state compact">Aucun eleve trouve.</div>
                     )}
                   </div>
+
+                  {studentDossierLoading && !studentDossier ? (
+                    <div className="empty-state compact">Chargement du dossier central...</div>
+                  ) : null}
+
+                  {studentDossier ? (
+                    <div className="student-dossier-panel">
+                      <div className="section-title">
+                        <strong>Dossier central</strong>
+                        <span>
+                          {studentDossier.student.matricule} - {studentDossier.student.lastName}{" "}
+                          {studentDossier.student.firstName}
+                        </span>
+                      </div>
+                      <div className="student-dossier-summary">
+                        <div>
+                          <span>Statut</span>
+                          <strong>{studentStatusLabel(studentDossier.student.status)}</strong>
+                        </div>
+                        <div>
+                          <span>Cursus</span>
+                          <strong>{studentDossier.cursus.length} annee(s)</strong>
+                        </div>
+                        <div>
+                          <span>Documents</span>
+                          <strong>{studentDossier.documents.length}</strong>
+                        </div>
+                        <div>
+                          <span>Reste a payer</span>
+                          <strong>{formatMoney(studentDossier.finances.balance, selected?.currency)}</strong>
+                        </div>
+                      </div>
+                      <div className="student-dossier-grid">
+                        <div className="student-dossier-section">
+                          <div className="section-title compact">
+                            <strong>Cursus scolaire</strong>
+                            <span>{studentDossier.cursus.length} ligne(s)</span>
+                          </div>
+                          <div className="dossier-list">
+                            {studentDossier.cursus.length ? (
+                              studentDossier.cursus.map((enrollment) => (
+                                <div className="dossier-row" key={enrollment.id}>
+                                  <strong>{enrollment.academicYearName}</strong>
+                                  <span>
+                                    {enrollment.className}
+                                    {enrollment.levelName ? ` - ${enrollment.levelName}` : ""}
+                                  </span>
+                                  <small>
+                                    {enrollment.mainTeacherName
+                                      ? `Titulaire : ${enrollment.mainTeacherName}`
+                                      : "Titulaire non renseigne"}
+                                  </small>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="empty-state compact">Aucune inscription historisee.</div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="student-dossier-section">
+                          <div className="section-title compact">
+                            <strong>Finances</strong>
+                            <span>{studentDossier.finances.payments.length} paiement(s)</span>
+                          </div>
+                          <div className="dossier-kpis">
+                            <span>Du : {formatMoney(studentDossier.finances.totalDue, selected?.currency)}</span>
+                            <span>Paye : {formatMoney(studentDossier.finances.paid, selected?.currency)}</span>
+                            <span>Reste : {formatMoney(studentDossier.finances.balance, selected?.currency)}</span>
+                          </div>
+                          <div className="dossier-list">
+                            {studentDossier.finances.assignments.length ? (
+                              studentDossier.finances.assignments.slice(0, 5).map((assignment) => (
+                                <div className="dossier-row" key={assignment.id}>
+                                  <strong>{assignment.feeName}</strong>
+                                  <span>{assignment.academicYearName}</span>
+                                  <small>
+                                    Reste : {formatMoney(assignment.balance, selected?.currency)}
+                                  </small>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="empty-state compact">Aucun frais affecte.</div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="student-dossier-section">
+                          <div className="section-title compact">
+                            <strong>Documents</strong>
+                            <span>{studentDossier.documents.length} piece(s)</span>
+                          </div>
+                          <div className="dossier-list">
+                            {studentDossier.documents.length ? (
+                              studentDossier.documents.slice(0, 5).map((document) => (
+                                <div className="dossier-row" key={document.id}>
+                                  <strong>{documentTypeLabel(document.documentType)}</strong>
+                                  <span>{documentDisplayName(document)}</span>
+                                  <small>{new Date(document.createdAt).toLocaleDateString("fr-FR")}</small>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="empty-state compact">Aucun document scanne.</div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="student-dossier-section">
+                          <div className="section-title compact">
+                            <strong>Pedagogie</strong>
+                            <span>
+                              {studentDossier.pedagogy.grades.length} note(s),{" "}
+                              {studentDossier.pedagogy.reportCards.length} bulletin(s)
+                            </span>
+                          </div>
+                          <div className="dossier-list">
+                            {studentDossier.pedagogy.reportCards.length ? (
+                              studentDossier.pedagogy.reportCards.slice(0, 5).map((reportCard) => (
+                                <div className="dossier-row" key={reportCard.id}>
+                                  <strong>{reportCard.periodName ?? "Periode"}</strong>
+                                  <span>{reportCard.academicYearName ?? "Annee non renseignee"}</span>
+                                  <small>
+                                    Moyenne : {reportCard.average ?? "-"} - Rang : {reportCard.rank ?? "-"}
+                                  </small>
+                                </div>
+                              ))
+                            ) : studentDossier.pedagogy.grades.length ? (
+                              studentDossier.pedagogy.grades.slice(0, 5).map((grade) => (
+                                <div className="dossier-row" key={grade.id}>
+                                  <strong>{grade.subjectName}</strong>
+                                  <span>
+                                    {grade.assessmentName} - {grade.periodName}
+                                  </span>
+                                  <small>
+                                    Note : {grade.score}/{grade.maxScore}
+                                  </small>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="empty-state compact">Notes et bulletins a venir.</div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>

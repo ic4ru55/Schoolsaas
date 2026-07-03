@@ -103,6 +103,31 @@ function cleanOptionalText(value?: string) {
   return value.trim() || null;
 }
 
+function money(value: unknown) {
+  if (value === null || value === undefined) {
+    return 0;
+  }
+
+  return Number(value);
+}
+
+function netDue(assignment: {
+  amountDue: unknown;
+  discountAmount: unknown;
+  scholarshipAmount: unknown;
+}) {
+  return Math.max(
+    0,
+    money(assignment.amountDue) -
+      money(assignment.discountAmount) -
+      money(assignment.scholarshipAmount)
+  );
+}
+
+function paidAmount(assignment: { allocations?: Array<{ amount: unknown }> }) {
+  return assignment.allocations?.reduce((total, allocation) => total + money(allocation.amount), 0) ?? 0;
+}
+
 async function replaceStudentGuardians(
   tx: Prisma.TransactionClient,
   establishmentId: string,
@@ -360,6 +385,287 @@ export class StudentsService {
         include: studentInclude
       });
     });
+  }
+
+  async findDossierByMatricule(establishmentId: string, matricule?: string) {
+    const cleanedMatricule = matricule?.trim();
+    if (!cleanedMatricule) {
+      throw new BadRequestException("Renseigner le matricule de l'eleve.");
+    }
+
+    const student = await this.prisma.student.findUnique({
+      where: {
+        establishmentId_matricule: {
+          establishmentId,
+          matricule: cleanedMatricule
+        }
+      },
+      select: { id: true }
+    });
+
+    if (!student) {
+      throw new NotFoundException("Aucun eleve trouve avec ce matricule.");
+    }
+
+    return this.findDossier(establishmentId, student.id);
+  }
+
+  async findDossier(establishmentId: string, studentId: string) {
+    const student = await this.prisma.student.findFirst({
+      where: { id: studentId, establishmentId },
+      include: {
+        enrollments: {
+          include: {
+            academicYear: true,
+            class: {
+              include: {
+                level: true,
+                mainTeacher: true
+              }
+            }
+          },
+          orderBy: {
+            enrolledAt: "desc"
+          }
+        },
+        guardians: {
+          include: {
+            guardian: true
+          },
+          orderBy: {
+            isPrimary: "desc"
+          }
+        },
+        documents: {
+          orderBy: {
+            createdAt: "desc"
+          }
+        },
+        feeAssignments: {
+          include: {
+            feeItem: {
+              include: {
+                academicYear: true,
+                class: true,
+                level: true
+              }
+            },
+            allocations: {
+              where: {
+                payment: {
+                  cancelledAt: null
+                }
+              },
+              include: {
+                payment: {
+                  select: {
+                    id: true,
+                    receiptNumber: true,
+                    paidAt: true,
+                    method: true,
+                    reference: true,
+                    academicYearId: true
+                  }
+                }
+              }
+            }
+          },
+          orderBy: {
+            createdAt: "desc"
+          }
+        },
+        payments: {
+          where: {
+            cancelledAt: null
+          },
+          include: {
+            academicYear: true,
+            receipt: true,
+            allocations: {
+              include: {
+                studentFeeAssignment: {
+                  include: {
+                    feeItem: true
+                  }
+                }
+              }
+            }
+          },
+          orderBy: {
+            paidAt: "desc"
+          }
+        },
+        grades: {
+          include: {
+            assessment: {
+              include: {
+                period: true,
+                classSubject: {
+                  include: {
+                    subject: true,
+                    class: true,
+                    teacher: true
+                  }
+                }
+              }
+            }
+          },
+          orderBy: {
+            createdAt: "desc"
+          }
+        },
+        reportCards: {
+          orderBy: {
+            generatedAt: "desc"
+          }
+        }
+      }
+    });
+
+    if (!student) {
+      throw new NotFoundException("Eleve introuvable.");
+    }
+
+    const yearIds = [...new Set(student.reportCards.map((item) => item.academicYearId))];
+    const periodIds = [...new Set(student.reportCards.map((item) => item.periodId))];
+    const classIds = [...new Set(student.reportCards.map((item) => item.classId))];
+    const [academicYears, periods, classes] = await Promise.all([
+      yearIds.length
+        ? this.prisma.academicYear.findMany({
+            where: { establishmentId, id: { in: yearIds } }
+          })
+        : [],
+      periodIds.length
+        ? this.prisma.period.findMany({
+            where: { establishmentId, id: { in: periodIds } }
+          })
+        : [],
+      classIds.length
+        ? this.prisma.schoolClass.findMany({
+            where: { establishmentId, id: { in: classIds } },
+            include: { level: true }
+          })
+        : []
+    ]);
+    const academicYearById = new Map(academicYears.map((item) => [item.id, item]));
+    const periodById = new Map(periods.map((item) => [item.id, item]));
+    const classById = new Map(classes.map((item) => [item.id, item]));
+
+    const assignments = student.feeAssignments.map((assignment) => {
+      const due = netDue(assignment);
+      const paid = paidAmount(assignment);
+      return {
+        id: assignment.id,
+        academicYearId: assignment.academicYearId,
+        academicYearName: assignment.feeItem.academicYear.name,
+        feeName: assignment.feeItem.name,
+        className: assignment.feeItem.class?.name ?? null,
+        levelName: assignment.feeItem.level?.name ?? null,
+        amountDue: due,
+        paid,
+        balance: Math.max(0, due - paid),
+        dueDate: assignment.feeItem.dueDate
+      };
+    });
+    const payments = student.payments.map((payment) => ({
+      ...payment,
+      amount: money(payment.amount),
+      allocations: payment.allocations.map((allocation) => ({
+        ...allocation,
+        amount: money(allocation.amount),
+        studentFeeAssignment: allocation.studentFeeAssignment
+          ? {
+              ...allocation.studentFeeAssignment,
+              amountDue: money(allocation.studentFeeAssignment.amountDue),
+              discountAmount: money(allocation.studentFeeAssignment.discountAmount),
+              scholarshipAmount: money(allocation.studentFeeAssignment.scholarshipAmount),
+              feeItem: allocation.studentFeeAssignment.feeItem
+                ? {
+                    ...allocation.studentFeeAssignment.feeItem,
+                    amount: money(allocation.studentFeeAssignment.feeItem.amount)
+                  }
+                : null
+            }
+          : null
+      }))
+    }));
+    const totalDue = assignments.reduce((total, assignment) => total + assignment.amountDue, 0);
+    const totalPaid = assignments.reduce((total, assignment) => total + assignment.paid, 0);
+
+    return {
+      student: {
+        id: student.id,
+        establishmentId: student.establishmentId,
+        matricule: student.matricule,
+        firstName: student.firstName,
+        lastName: student.lastName,
+        gender: student.gender,
+        birthDate: student.birthDate,
+        birthPlace: student.birthPlace,
+        nationality: student.nationality,
+        photoUrl: student.photoUrl,
+        status: student.status,
+        createdAt: student.createdAt,
+        updatedAt: student.updatedAt
+      },
+      guardians: student.guardians,
+      cursus: student.enrollments.map((enrollment) => ({
+        id: enrollment.id,
+        academicYearId: enrollment.academicYearId,
+        academicYearName: enrollment.academicYear.name,
+        classId: enrollment.classId,
+        className: enrollment.class.name,
+        levelName: enrollment.class.level?.name ?? null,
+        mainTeacherName: enrollment.class.mainTeacher
+          ? `${enrollment.class.mainTeacher.lastName} ${enrollment.class.mainTeacher.firstName}`
+          : null,
+        enrollmentType: enrollment.enrollmentType,
+        status: enrollment.status,
+        enrolledAt: enrollment.enrolledAt
+      })),
+      documents: student.documents,
+      finances: {
+        totalDue,
+        paid: totalPaid,
+        balance: Math.max(0, totalDue - totalPaid),
+        assignments,
+        payments
+      },
+      pedagogy: {
+        grades: student.grades.map((grade) => ({
+          id: grade.id,
+          score: money(grade.score),
+          comment: grade.comment,
+          validatedAt: grade.validatedAt,
+          createdAt: grade.createdAt,
+          assessmentName: grade.assessment.name,
+          maxScore: money(grade.assessment.maxScore),
+          weight: money(grade.assessment.weight),
+          periodName: grade.assessment.period.name,
+          academicYearId: grade.assessment.academicYearId,
+          subjectName: grade.assessment.classSubject.subject.name,
+          className: grade.assessment.classSubject.class.name,
+          teacherName: grade.assessment.classSubject.teacher
+            ? `${grade.assessment.classSubject.teacher.lastName} ${grade.assessment.classSubject.teacher.firstName}`
+            : null
+        })),
+        reportCards: student.reportCards.map((reportCard) => ({
+          id: reportCard.id,
+          academicYearId: reportCard.academicYearId,
+          academicYearName: academicYearById.get(reportCard.academicYearId)?.name ?? null,
+          periodId: reportCard.periodId,
+          periodName: periodById.get(reportCard.periodId)?.name ?? null,
+          classId: reportCard.classId,
+          className: classById.get(reportCard.classId)?.name ?? null,
+          average: reportCard.average === null ? null : money(reportCard.average),
+          rank: reportCard.rank,
+          decision: reportCard.decision,
+          pdfUrl: reportCard.pdfUrl,
+          generatedBy: reportCard.generatedBy,
+          generatedAt: reportCard.generatedAt
+        }))
+      }
+    };
   }
 
   findDocuments(establishmentId: string, studentId: string) {

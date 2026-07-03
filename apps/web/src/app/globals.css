@@ -820,6 +820,15 @@ select {
   gap: 12px;
 }
 
+.student-list-tools.with-action {
+  grid-template-columns: minmax(0, 1.3fr) minmax(160px, 0.55fr) auto;
+  align-items: end;
+}
+
+.student-dossier-search-button {
+  min-height: 44px;
+}
+
 .student-table-wrap {
   max-height: 480px;
   overflow: auto;
@@ -867,6 +876,10 @@ select {
   background: #f0f6f2;
 }
 
+.student-table tbody tr.selected {
+  background: #f0f6f2;
+}
+
 .student-table td strong {
   display: block;
   font-size: 14px;
@@ -895,6 +908,77 @@ select {
 .selected-student-card strong {
   display: block;
   margin-top: 4px;
+}
+
+.student-dossier-panel {
+  display: grid;
+  gap: 14px;
+  border-top: 1px solid var(--line);
+  margin-top: 18px;
+  padding-top: 18px;
+}
+
+.student-dossier-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.student-dossier-summary div,
+.student-dossier-section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+  padding: 12px;
+}
+
+.student-dossier-summary span,
+.dossier-row span,
+.dossier-row small,
+.dossier-kpis span {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.student-dossier-summary strong {
+  display: block;
+  margin-top: 4px;
+}
+
+.student-dossier-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.section-title.compact {
+  margin-bottom: 10px;
+}
+
+.dossier-kpis {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.dossier-list {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.dossier-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+}
+
+.dossier-row strong {
+  display: block;
+  font-size: 14px;
 }
 
 .document-panel {
@@ -1309,6 +1393,10 @@ select {
     grid-template-columns: 1fr;
   }
 
+  .student-dossier-grid {
+    grid-template-columns: 1fr;
+  }
+
   .finance-grid,
   .payment-workspace,
   .fee-edit-form,
@@ -1346,6 +1434,9 @@ select {
   .document-row,
   .setup-form,
   .student-list-tools,
+  .student-list-tools.with-action,
+  .student-dossier-summary,
+  .student-dossier-grid,
   .nav-section {
     grid-template-columns: 1fr;
   }
