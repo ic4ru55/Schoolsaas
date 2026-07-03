@@ -349,17 +349,6 @@ select {
   grid-column: 1 / -1;
 }
 
-.checkbox-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.checkbox-field input {
-  width: 18px;
-  min-height: 18px;
-}
-
 .field span {
   color: var(--muted);
   font-size: 13px;
@@ -453,17 +442,91 @@ select {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.tuition-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.tuition-toggle:hover,
+.tuition-toggle.active {
+  border-color: #115e35;
+  background: #f0f7f2;
+}
+
+.tuition-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.tuition-toggle-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.tuition-toggle-copy strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.tuition-toggle-copy small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.switch-control {
+  position: relative;
+  flex: 0 0 auto;
+  width: 48px;
+  height: 26px;
+  border-radius: 999px;
+  background: #dce3dd;
+  transition: background 0.18s ease;
+}
+
+.switch-control span {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(23, 32, 27, 0.25);
+  transition: transform 0.18s ease;
+}
+
+.tuition-toggle.active .switch-control {
+  background: var(--green);
+}
+
+.tuition-toggle.active .switch-control span {
+  transform: translateX(22px);
+}
+
 .class-fee-builder {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fbfcfb;
-  padding: 12px;
+  padding: 14px;
 }
 
 .class-fee-row {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(120px, 0.45fr) minmax(150px, 0.45fr);
   gap: 10px;
+  align-items: end;
   margin-bottom: 10px;
 }
 

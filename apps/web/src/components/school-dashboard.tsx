@@ -2030,17 +2030,32 @@ export function SchoolDashboard() {
                         onChange={(event) => setClassForm({ ...classForm, capacity: event.target.value })}
                       />
                     </label>
-                    <label className="field full checkbox-field">
-                      <input
-                        checked={classForm.tuitionEnabled}
+                    <div className="field full">
+                      <button
+                        aria-pressed={classForm.tuitionEnabled}
+                        className={`tuition-toggle ${classForm.tuitionEnabled ? "active" : ""}`}
                         disabled={!selected || !activeYear}
-                        type="checkbox"
-                        onChange={(event) =>
-                          setClassForm({ ...classForm, tuitionEnabled: event.target.checked })
+                        type="button"
+                        onClick={() =>
+                          setClassForm({
+                            ...classForm,
+                            tuitionEnabled: !classForm.tuitionEnabled
+                          })
                         }
-                      />
-                      <span>Ajouter la scolarite et les tranches de cette classe maintenant</span>
-                    </label>
+                      >
+                        <span className="tuition-toggle-copy">
+                          <strong>Scolarite de la classe</strong>
+                          <small>
+                            {classForm.tuitionEnabled
+                              ? "Les tranches seront creees avec cette classe."
+                              : "Activer si cette classe doit avoir ses propres tranches."}
+                          </small>
+                        </span>
+                        <span className="switch-control" aria-hidden="true">
+                          <span />
+                        </span>
+                      </button>
+                    </div>
                     {classForm.tuitionEnabled ? (
                       <div className="class-fee-builder field full">
                         <div className="section-title compact">
