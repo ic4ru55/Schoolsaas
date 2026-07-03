@@ -26,6 +26,8 @@ Ce schema est volontairement global. Les migrations detaillees devront etre ecri
 - email
 - logo_url
 - stamp_url
+- director_signature_url
+- cashier_signature_url
 - motto
 - currency
 - active_academic_year_id
@@ -504,4 +506,3 @@ Ce schema est volontairement global. Les migrations detaillees devront etre ecri
 - name
 - credits
 - coefficient
-

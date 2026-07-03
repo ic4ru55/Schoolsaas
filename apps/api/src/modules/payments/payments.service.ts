@@ -98,6 +98,8 @@ export class PaymentsService {
         email: true,
         logoUrl: true,
         stampUrl: true,
+        directorSignatureUrl: true,
+        cashierSignatureUrl: true,
         motto: true,
         currency: true,
         activeAcademicYearId: true

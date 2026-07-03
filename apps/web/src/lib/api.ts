@@ -10,6 +10,8 @@ export type Establishment = {
   email?: string | null;
   logoUrl?: string | null;
   stampUrl?: string | null;
+  directorSignatureUrl?: string | null;
+  cashierSignatureUrl?: string | null;
   motto?: string | null;
   currency: string;
   activeAcademicYearId?: string | null;
@@ -327,7 +329,7 @@ export function updateEstablishment(
 export function uploadEstablishmentAsset(
   establishmentId: string,
   input: {
-    assetType: "LOGO" | "STAMP";
+    assetType: "LOGO" | "STAMP" | "DIRECTOR_SIGNATURE" | "CASHIER_SIGNATURE";
     originalName: string;
     mimeType: string;
     base64Content: string;

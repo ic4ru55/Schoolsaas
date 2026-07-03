@@ -28,6 +28,8 @@ const ASSET_EXTENSIONS: Record<string, string> = {
 const ASSET_MIME_BY_EXTENSION: Record<string, string> = Object.fromEntries(
   Object.entries(ASSET_EXTENSIONS).map(([mimeType, extension]) => [extension, mimeType])
 );
+const ASSET_KEYS = ["logo", "stamp", "director-signature", "cashier-signature"] as const;
+type AssetKey = (typeof ASSET_KEYS)[number];
 
 function establishmentInclude() {
   return {
@@ -81,15 +83,33 @@ function bufferMatchesMime(buffer: Buffer, mimeType: string) {
 
 function assetRouteKey(assetType: string) {
   const key = assetType.toLowerCase();
-  if (key !== "logo" && key !== "stamp") {
+  if (!ASSET_KEYS.includes(key as AssetKey)) {
     throw new BadRequestException("Type d'image inconnu.");
   }
 
-  return key;
+  return key as AssetKey;
 }
 
-function assetFieldName(assetKey: "logo" | "stamp") {
-  return assetKey === "logo" ? "logoUrl" : "stampUrl";
+function assetStorageKey(assetType: UploadEstablishmentAssetDto["assetType"]) {
+  const keys: Record<UploadEstablishmentAssetDto["assetType"], AssetKey> = {
+    LOGO: "logo",
+    STAMP: "stamp",
+    DIRECTOR_SIGNATURE: "director-signature",
+    CASHIER_SIGNATURE: "cashier-signature"
+  };
+
+  return keys[assetType];
+}
+
+function assetFieldName(assetKey: AssetKey) {
+  const fields: Record<AssetKey, "logoUrl" | "stampUrl" | "directorSignatureUrl" | "cashierSignatureUrl"> = {
+    logo: "logoUrl",
+    stamp: "stampUrl",
+    "director-signature": "directorSignatureUrl",
+    "cashier-signature": "cashierSignatureUrl"
+  };
+
+  return fields[assetKey];
 }
 
 @Injectable()
@@ -228,7 +248,7 @@ export class EstablishmentsService {
       throw new BadRequestException("Le contenu du fichier ne correspond pas au format annonce.");
     }
 
-    const assetKey = dto.assetType === "LOGO" ? "logo" : "stamp";
+    const assetKey = assetStorageKey(dto.assetType);
     const storageDirectory = join(process.cwd(), "storage", "establishment-assets", id, assetKey);
     await mkdir(storageDirectory, { recursive: true });
 
@@ -236,7 +256,7 @@ export class EstablishmentsService {
     await writeFile(join(storageDirectory, fileName), fileBuffer);
 
     const publicPath = `/establishments/${id}/assets/${assetKey}/${fileName}`;
-    const data = assetKey === "logo" ? { logoUrl: publicPath } : { stampUrl: publicPath };
+    const data = { [assetFieldName(assetKey)]: publicPath };
 
     return this.prisma.establishment.update({
       where: { id },
@@ -257,7 +277,9 @@ export class EstablishmentsService {
       where: { id },
       select: {
         logoUrl: true,
-        stampUrl: true
+        stampUrl: true,
+        directorSignatureUrl: true,
+        cashierSignatureUrl: true
       }
     });
 

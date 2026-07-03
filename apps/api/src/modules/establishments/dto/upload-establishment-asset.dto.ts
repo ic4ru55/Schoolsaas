@@ -2,12 +2,15 @@ import { ApiProperty } from "@nestjs/swagger";
 import { IsString, Length, Matches } from "class-validator";
 
 export class UploadEstablishmentAssetDto {
-  @ApiProperty({ enum: ["LOGO", "STAMP"], example: "LOGO" })
-  @IsString()
-  @Matches(/^(LOGO|STAMP)$/, {
-    message: "Le type d'image doit etre LOGO ou STAMP."
+  @ApiProperty({
+    enum: ["LOGO", "STAMP", "DIRECTOR_SIGNATURE", "CASHIER_SIGNATURE"],
+    example: "LOGO"
   })
-  assetType!: "LOGO" | "STAMP";
+  @IsString()
+  @Matches(/^(LOGO|STAMP|DIRECTOR_SIGNATURE|CASHIER_SIGNATURE)$/, {
+    message: "Le type d'image doit etre LOGO, STAMP, DIRECTOR_SIGNATURE ou CASHIER_SIGNATURE."
+  })
+  assetType!: "LOGO" | "STAMP" | "DIRECTOR_SIGNATURE" | "CASHIER_SIGNATURE";
 
   @ApiProperty({ example: "logo-ecole.png" })
   @IsString()

@@ -193,8 +193,22 @@ const establishmentAssets = [
     assetType: "STAMP",
     field: "stampUrl",
     detail: "Image scannee du cachet pour les sorties imprimees."
+  },
+  {
+    title: "Signature direction",
+    assetType: "DIRECTOR_SIGNATURE",
+    field: "directorSignatureUrl",
+    detail: "Signature de la direction pour bulletins et attestations."
+  },
+  {
+    title: "Signature caisse",
+    assetType: "CASHIER_SIGNATURE",
+    field: "cashierSignatureUrl",
+    detail: "Signature utilisee sur les recus de paiement."
   }
 ] as const;
+
+type EstablishmentAssetType = (typeof establishmentAssets)[number]["assetType"];
 
 const allowedIdentityImageTypes = ["image/jpeg", "image/png", "image/webp"];
 
@@ -308,7 +322,7 @@ export function SchoolDashboard() {
   const [online, setOnline] = useState(false);
   const [saving, setSaving] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
-  const [assetSaving, setAssetSaving] = useState<"LOGO" | "STAMP" | null>(null);
+  const [assetSaving, setAssetSaving] = useState<EstablishmentAssetType | null>(null);
   const [yearSaving, setYearSaving] = useState(false);
   const [structureSaving, setStructureSaving] = useState(false);
   const [studentSaving, setStudentSaving] = useState(false);
@@ -725,7 +739,7 @@ export function SchoolDashboard() {
     }
   }
 
-  async function handleUploadIdentityAsset(assetType: "LOGO" | "STAMP", file: File) {
+  async function handleUploadIdentityAsset(assetType: EstablishmentAssetType, file: File) {
     if (!selected) {
       setAlerts(["Creer ou selectionner un etablissement avant d'ajouter son identite visuelle."]);
       return;
@@ -755,7 +769,9 @@ export function SchoolDashboard() {
       setAlerts([
         assetType === "LOGO"
           ? "Logo enregistre. Il sera utilise sur les recus, bulletins et documents."
-          : "Cachet enregistre. Il sera disponible pour les impressions officielles."
+          : assetType === "STAMP"
+            ? "Cachet enregistre. Il sera disponible pour les impressions officielles."
+            : "Signature enregistree. Elle sera disponible pour les impressions officielles."
       ]);
     } catch (error) {
       setAlerts([errorMessage(error, "Enregistrement de l'image impossible.")]);
@@ -1388,6 +1404,7 @@ export function SchoolDashboard() {
     const studentName = `${payment.student?.lastName ?? ""} ${payment.student?.firstName ?? ""}`.trim();
     const logoUrl = apiFileUrl(establishment.logoUrl);
     const stampUrl = apiFileUrl(establishment.stampUrl);
+    const cashierSignatureUrl = apiFileUrl(establishment.cashierSignatureUrl);
     const logoMarkup = logoUrl
       ? `<img class="logo" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(
           establishment.name
@@ -1397,6 +1414,9 @@ export function SchoolDashboard() {
       ? `<img class="stamp" src="${escapeHtml(stampUrl)}" alt="Cachet ${escapeHtml(
           establishment.name
         )}" />`
+      : "";
+    const signatureMarkup = cashierSignatureUrl
+      ? `<img class="signature-image" src="${escapeHtml(cashierSignatureUrl)}" alt="Signature caisse" />`
       : "";
     const allocationRows =
       payment.allocations
@@ -1435,6 +1455,7 @@ export function SchoolDashboard() {
     .signature-block { min-width: 180px; text-align: center; }
     .signature-block span { display: block; margin-bottom: 10px; color: #4b5563; }
     .stamp { max-width: 120px; max-height: 80px; object-fit: contain; }
+    .signature-image { display: block; max-width: 135px; max-height: 54px; object-fit: contain; margin: 0 auto 6px; }
     @media print { body { padding: 0; } .receipt { border: 0; } }
   </style>
 </head>
@@ -1476,6 +1497,7 @@ export function SchoolDashboard() {
       <span>Caissier : ${escapeHtml(payment.receivedBy ?? "-")}</span>
       <div class="signature-block">
         <span>Signature et cachet</span>
+        ${signatureMarkup}
         ${stampMarkup}
       </div>
     </footer>
@@ -1925,7 +1947,7 @@ export function SchoolDashboard() {
                   <div className="settings-block">
                     <div className="section-title">
                       <strong>Identite visuelle</strong>
-                      <span>Logo et cachet officiels</span>
+                      <span>Logo, cachet et signatures</span>
                     </div>
                     <div className="identity-assets">
                       {establishmentAssets.map((asset) => (
@@ -3710,6 +3732,13 @@ function BrandAssetUploader({
   onUpload: (file: File) => void;
 }) {
   const imageUrl = apiFileUrl(assetUrl);
+  const initials = title
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
 
   return (
     <div className="identity-asset">
@@ -3717,7 +3746,7 @@ function BrandAssetUploader({
         {imageUrl ? (
           <img alt="" src={imageUrl} />
         ) : (
-          <span>{title.slice(0, 2).toUpperCase()}</span>
+          <span>{initials}</span>
         )}
       </div>
       <div className="asset-copy">

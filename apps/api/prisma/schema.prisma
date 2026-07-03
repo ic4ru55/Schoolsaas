@@ -81,6 +81,8 @@ model Establishment {
   email                String?
   logoUrl              String?
   stampUrl             String?
+  directorSignatureUrl String?
+  cashierSignatureUrl  String?
   motto                String?
   currency             String             @default("XOF")
   activeAcademicYearId String?
