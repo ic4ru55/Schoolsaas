@@ -520,31 +520,44 @@ export function getStudents(establishmentId: string, search?: string) {
   return request<Student[]>(`/establishments/${establishmentId}/students${query}`);
 }
 
-export function createStudent(
-  establishmentId: string,
-  input: {
+type StudentInput = {
+  firstName: string;
+  lastName: string;
+  gender?: "FEMALE" | "MALE";
+  birthDate?: string;
+  birthPlace?: string;
+  nationality?: string;
+  classId?: string;
+  enrollmentType?: "NEW" | "REENROLLMENT" | "TRANSFER";
+  guardians?: Array<{
     firstName: string;
     lastName: string;
-    gender?: "FEMALE" | "MALE";
-    birthDate?: string;
-    birthPlace?: string;
-    nationality?: string;
-    classId?: string;
-    enrollmentType?: "NEW" | "REENROLLMENT" | "TRANSFER";
-    guardians?: Array<{
-      firstName: string;
-      lastName: string;
-      relationship: string;
-      phone: string;
-      email?: string;
-      address?: string;
-      profession?: string;
-      isPrimary?: boolean;
-    }>;
-  }
+    relationship: string;
+    phone: string;
+    email?: string;
+    address?: string;
+    profession?: string;
+    isPrimary?: boolean;
+  }>;
+};
+
+export function createStudent(
+  establishmentId: string,
+  input: StudentInput
 ) {
   return request<Student>(`/establishments/${establishmentId}/students`, {
     method: "POST",
+    body: JSON.stringify(stripEmptyStrings(input))
+  });
+}
+
+export function updateStudent(
+  establishmentId: string,
+  studentId: string,
+  input: Partial<StudentInput> & { status?: Student["status"] }
+) {
+  return request<Student>(`/establishments/${establishmentId}/students/${studentId}`, {
+    method: "PATCH",
     body: JSON.stringify(stripEmptyStrings(input))
   });
 }

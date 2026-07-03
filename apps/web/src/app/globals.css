@@ -764,14 +764,25 @@ select {
 }
 
 .teacher-form-actions,
-.teacher-action-row {
+.teacher-action-row,
+.student-form-actions,
+.table-action-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.teacher-action-row {
+.teacher-action-row,
+.table-action-row {
   justify-content: flex-start;
+}
+
+.student-form-actions {
+  align-items: center;
+}
+
+.student-form-actions .primary-button {
+  flex: 1 1 220px;
 }
 
 .teacher-assignment-form {

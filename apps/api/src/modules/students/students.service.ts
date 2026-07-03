@@ -3,9 +3,11 @@ import { createReadStream } from "fs";
 import { mkdir, stat, unlink, writeFile } from "fs/promises";
 import { extname, join } from "path";
 import { BadRequestException, Injectable, NotFoundException, StreamableFile } from "@nestjs/common";
+import { EnrollmentStatus, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateStudentDocumentDto } from "./dto/create-student-document.dto";
 import { CreateStudentDto } from "./dto/create-student.dto";
+import { UpdateStudentDto } from "./dto/update-student.dto";
 
 const MAX_DOCUMENT_SIZE_BYTES = 8 * 1024 * 1024;
 const MIME_EXTENSIONS: Record<string, string> = {
@@ -13,6 +15,35 @@ const MIME_EXTENSIONS: Record<string, string> = {
   "image/jpeg": ".jpg",
   "image/png": ".png",
   "image/webp": ".webp"
+};
+
+const studentInclude = {
+  enrollments: {
+    include: {
+      academicYear: true,
+      class: {
+        include: {
+          level: true
+        }
+      }
+    },
+    orderBy: {
+      enrolledAt: "desc" as const
+    }
+  },
+  guardians: {
+    include: {
+      guardian: true
+    },
+    orderBy: {
+      isPrimary: "desc" as const
+    }
+  },
+  documents: {
+    orderBy: {
+      createdAt: "desc" as const
+    }
+  }
 };
 
 function matriculeYear(academicYearName?: string) {
@@ -64,6 +95,67 @@ function decodeBase64File(value: string) {
   return Buffer.from(base64, "base64");
 }
 
+function cleanOptionalText(value?: string) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return value.trim() || null;
+}
+
+async function replaceStudentGuardians(
+  tx: Prisma.TransactionClient,
+  establishmentId: string,
+  studentId: string,
+  guardians: NonNullable<UpdateStudentDto["guardians"]>
+) {
+  const existingLinks = await tx.studentGuardian.findMany({
+    where: { establishmentId, studentId },
+    select: { guardianId: true }
+  });
+  const previousGuardianIds = existingLinks.map((item) => item.guardianId);
+
+  await tx.studentGuardian.deleteMany({
+    where: { establishmentId, studentId }
+  });
+
+  if (previousGuardianIds.length) {
+    await tx.guardian.deleteMany({
+      where: {
+        establishmentId,
+        id: { in: previousGuardianIds },
+        students: {
+          none: {}
+        }
+      }
+    });
+  }
+
+  for (const [index, guardian] of guardians.entries()) {
+    const createdGuardian = await tx.guardian.create({
+      data: {
+        establishmentId,
+        firstName: guardian.firstName.trim(),
+        lastName: guardian.lastName.trim(),
+        phone: guardian.phone.trim(),
+        email: cleanOptionalText(guardian.email),
+        address: cleanOptionalText(guardian.address),
+        profession: cleanOptionalText(guardian.profession)
+      }
+    });
+
+    await tx.studentGuardian.create({
+      data: {
+        establishmentId,
+        studentId,
+        guardianId: createdGuardian.id,
+        relationship: guardian.relationship.trim(),
+        isPrimary: guardian.isPrimary ?? index === 0
+      }
+    });
+  }
+}
+
 @Injectable()
 export class StudentsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -82,34 +174,7 @@ export class StudentsService {
             }
           : {})
       },
-      include: {
-        enrollments: {
-          include: {
-            academicYear: true,
-            class: {
-              include: {
-                level: true
-              }
-            }
-          },
-          orderBy: {
-            enrolledAt: "desc"
-          }
-        },
-        guardians: {
-          include: {
-            guardian: true
-          },
-          orderBy: {
-            isPrimary: "desc"
-          }
-        },
-        documents: {
-          orderBy: {
-            createdAt: "desc"
-          }
-        }
-      },
+      include: studentInclude,
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }]
     });
   }
@@ -222,34 +287,77 @@ export class StudentsService {
 
       return tx.student.findUniqueOrThrow({
         where: { id: student.id },
-        include: {
-          enrollments: {
-            include: {
-              academicYear: true,
-              class: {
-                include: {
-                  level: true
-                }
-              }
-            },
-            orderBy: {
-              enrolledAt: "desc"
-            }
-          },
-          guardians: {
-            include: {
-              guardian: true
-            },
-            orderBy: {
-              isPrimary: "desc"
-            }
-          },
-          documents: {
-            orderBy: {
-              createdAt: "desc"
-            }
-          }
+        include: studentInclude
+      });
+    });
+  }
+
+  async update(establishmentId: string, studentId: string, dto: UpdateStudentDto) {
+    return this.prisma.$transaction(async (tx) => {
+      const student = await tx.student.findFirst({
+        where: { id: studentId, establishmentId },
+        select: { id: true }
+      });
+
+      if (!student) {
+        throw new NotFoundException("Eleve introuvable.");
+      }
+
+      const schoolClass = dto.classId
+        ? await tx.schoolClass.findFirst({
+            where: { id: dto.classId, establishmentId },
+            include: { academicYear: true }
+          })
+        : null;
+
+      if (dto.classId && !schoolClass) {
+        throw new BadRequestException("La classe indiquee est introuvable.");
+      }
+
+      await tx.student.update({
+        where: { id: student.id },
+        data: {
+          firstName: dto.firstName?.trim(),
+          lastName: dto.lastName?.trim(),
+          gender: dto.gender,
+          birthDate: dto.birthDate ? new Date(dto.birthDate) : undefined,
+          birthPlace: cleanOptionalText(dto.birthPlace),
+          nationality: cleanOptionalText(dto.nationality),
+          status: dto.status
         }
+      });
+
+      if (schoolClass) {
+        await tx.enrollment.upsert({
+          where: {
+            studentId_academicYearId: {
+              studentId: student.id,
+              academicYearId: schoolClass.academicYearId
+            }
+          },
+          update: {
+            classId: schoolClass.id,
+            enrollmentType: dto.enrollmentType,
+            status: EnrollmentStatus.ACTIVE
+          },
+          create: {
+            establishmentId,
+            studentId: student.id,
+            academicYearId: schoolClass.academicYearId,
+            classId: schoolClass.id,
+            enrollmentType: dto.enrollmentType,
+            status: EnrollmentStatus.ACTIVE
+          }
+        });
+      }
+
+      if (dto.guardians) {
+        await replaceStudentGuardians(tx, establishmentId, student.id, dto.guardians);
+      }
+
+      return tx.student.findUniqueOrThrow({
+        where: { id: student.id },
+        include: studentInclude
       });
     });
   }

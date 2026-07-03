@@ -1,7 +1,8 @@
-import { Body, Controller, Delete, Get, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { CreateStudentDocumentDto } from "./dto/create-student-document.dto";
 import { CreateStudentDto } from "./dto/create-student.dto";
+import { UpdateStudentDto } from "./dto/update-student.dto";
 import { StudentsService } from "./students.service";
 
 @ApiTags("students")
@@ -23,6 +24,15 @@ export class StudentsController {
     @Body() dto: CreateStudentDto
   ) {
     return this.studentsService.create(establishmentId, dto);
+  }
+
+  @Patch(":studentId")
+  update(
+    @Param("establishmentId") establishmentId: string,
+    @Param("studentId") studentId: string,
+    @Body() dto: UpdateStudentDto
+  ) {
+    return this.studentsService.update(establishmentId, studentId, dto);
   }
 
   @Get(":studentId/documents")

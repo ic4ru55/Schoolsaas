@@ -68,6 +68,7 @@ import {
   uploadStudentDocument,
   updateFeeItem,
   updateEstablishment,
+  updateStudent,
   updateTeacher
 } from "../lib/api";
 
@@ -106,6 +107,22 @@ function emptyGuardianForm(relationship = "Pere"): GuardianForm {
     email: "",
     profession: "",
     address: ""
+  };
+}
+
+function emptyStudentForm(classId = "") {
+  return {
+    firstName: "",
+    lastName: "",
+    gender: "",
+    birthDate: "",
+    birthPlace: "",
+    nationality: "Burkinabe",
+    classId,
+    enrollmentType: "NEW" as "NEW" | "REENROLLMENT" | "TRANSFER",
+    status: "ACTIVE" as Student["status"],
+    primaryGuardian: emptyGuardianForm("Pere"),
+    secondaryGuardian: emptyGuardianForm("Mere")
   };
 }
 
@@ -300,6 +317,33 @@ function teacherStatusLabel(value: string) {
   return labels[value] ?? value;
 }
 
+function studentStatusLabel(value: Student["status"]) {
+  const labels: Record<Student["status"], string> = {
+    ACTIVE: "Actif",
+    TRANSFERRED: "Transfere",
+    DROPPED_OUT: "Abandon",
+    EXCLUDED: "Exclu",
+    GRADUATED: "Diplome"
+  };
+  return labels[value] ?? value;
+}
+
+function studentStatusClass(value: Student["status"]) {
+  if (value === "ACTIVE") {
+    return "active";
+  }
+
+  if (value === "EXCLUDED" || value === "DROPPED_OUT") {
+    return "suspended";
+  }
+
+  return "inactive";
+}
+
+function toDateInput(value?: string | null) {
+  return value ? value.slice(0, 10) : "";
+}
+
 function teacherName(teacher?: Teacher | null) {
   return teacher ? `${teacher.lastName} ${teacher.firstName}`.trim() : "";
 }
@@ -382,6 +426,7 @@ export function SchoolDashboard() {
   const [students, setStudents] = useState<Student[]>([]);
   const [studentSearch, setStudentSearch] = useState("");
   const [studentClassFilter, setStudentClassFilter] = useState("");
+  const [editingStudentId, setEditingStudentId] = useState("");
   const [teacherSearch, setTeacherSearch] = useState("");
   const [teacherSaving, setTeacherSaving] = useState(false);
   const [editingTeacherId, setEditingTeacherId] = useState("");
@@ -452,18 +497,7 @@ export function SchoolDashboard() {
     teacherId: "",
     coefficient: "1"
   });
-  const [studentForm, setStudentForm] = useState({
-    firstName: "",
-    lastName: "",
-    gender: "",
-    birthDate: "",
-    birthPlace: "",
-    nationality: "Burkinabe",
-    classId: "",
-    enrollmentType: "NEW" as "NEW" | "REENROLLMENT" | "TRANSFER",
-    primaryGuardian: emptyGuardianForm("Pere"),
-    secondaryGuardian: emptyGuardianForm("Mere")
-  });
+  const [studentForm, setStudentForm] = useState(() => emptyStudentForm());
   const [documentForm, setDocumentForm] = useState<{
     documentType: string;
     label: string;
@@ -513,6 +547,10 @@ export function SchoolDashboard() {
   const selectedDocumentStudent = useMemo(
     () => students.find((student) => student.id === selectedDocumentStudentId) ?? null,
     [selectedDocumentStudentId, students]
+  );
+  const editingStudent = useMemo(
+    () => students.find((student) => student.id === editingStudentId) ?? null,
+    [editingStudentId, students]
   );
   const selectedPaymentStudent = useMemo(
     () => paymentOverview?.students.find((student) => student.id === selectedPaymentStudentId) ?? null,
@@ -1238,6 +1276,77 @@ export function SchoolDashboard() {
     }
   }
 
+  function resetStudentForm(classId = studentForm.classId) {
+    setEditingStudentId("");
+    setStudentForm(emptyStudentForm(classId));
+  }
+
+  function handleEditStudent(student: Student) {
+    const primaryGuardian =
+      student.guardians?.find((item) => item.isPrimary) ?? student.guardians?.[0];
+    const secondaryGuardian = student.guardians?.find((item) => !item.isPrimary);
+    const enrollment = student.enrollments?.[0];
+
+    setEditingStudentId(student.id);
+    setStudentForm({
+      firstName: student.firstName,
+      lastName: student.lastName,
+      gender: student.gender ?? "",
+      birthDate: toDateInput(student.birthDate),
+      birthPlace: student.birthPlace ?? "",
+      nationality: student.nationality ?? "Burkinabe",
+      classId: enrollment?.classId ?? "",
+      enrollmentType: enrollment?.enrollmentType ?? "NEW",
+      status: student.status,
+      primaryGuardian: primaryGuardian
+        ? {
+            relationship: primaryGuardian.relationship,
+            firstName: primaryGuardian.guardian.firstName,
+            lastName: primaryGuardian.guardian.lastName,
+            phone: primaryGuardian.guardian.phone ?? "",
+            email: primaryGuardian.guardian.email ?? "",
+            profession: primaryGuardian.guardian.profession ?? "",
+            address: primaryGuardian.guardian.address ?? ""
+          }
+        : emptyGuardianForm("Pere"),
+      secondaryGuardian: secondaryGuardian
+        ? {
+            relationship: secondaryGuardian.relationship,
+            firstName: secondaryGuardian.guardian.firstName,
+            lastName: secondaryGuardian.guardian.lastName,
+            phone: secondaryGuardian.guardian.phone ?? "",
+            email: secondaryGuardian.guardian.email ?? "",
+            profession: secondaryGuardian.guardian.profession ?? "",
+            address: secondaryGuardian.guardian.address ?? ""
+          }
+        : emptyGuardianForm("Mere")
+    });
+    setAlerts([`Dossier charge : ${student.matricule} - ${student.lastName} ${student.firstName}.`]);
+  }
+
+  async function handleStudentStatus(student: Student, status: Student["status"]) {
+    if (!selected) {
+      return;
+    }
+
+    setStudentSaving(true);
+    try {
+      await updateStudent(selected.id, student.id, { status });
+      if (editingStudentId === student.id) {
+        setStudentForm((current) => ({ ...current, status }));
+      }
+      await loadStudents(selected.id);
+      await loadDashboard(selected.id);
+      setAlerts([
+        `Statut de ${student.lastName} ${student.firstName} mis a jour : ${studentStatusLabel(status)}.`
+      ]);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Mise a jour du statut eleve impossible.")]);
+    } finally {
+      setStudentSaving(false);
+    }
+  }
+
   async function handleCreateStudent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -1331,7 +1440,7 @@ export function SchoolDashboard() {
             ]
           : [])
       ];
-      await createStudent(selected.id, {
+      const payload = {
         firstName: studentForm.firstName.trim(),
         lastName: studentForm.lastName.trim(),
         gender: gender || undefined,
@@ -1341,24 +1450,28 @@ export function SchoolDashboard() {
         classId: studentForm.classId,
         enrollmentType: studentForm.enrollmentType,
         guardians
-      });
-      setStudentForm({
-        firstName: "",
-        lastName: "",
-        gender: "",
-        birthDate: "",
-        birthPlace: "",
-        nationality: "Burkinabe",
-        classId: studentForm.classId,
-        enrollmentType: "NEW",
-        primaryGuardian: emptyGuardianForm("Pere"),
-        secondaryGuardian: emptyGuardianForm("Mere")
-      });
+      };
+      const wasEditing = Boolean(editingStudentId);
+
+      if (editingStudentId) {
+        await updateStudent(selected.id, editingStudentId, {
+          ...payload,
+          status: studentForm.status
+        });
+      } else {
+        await createStudent(selected.id, payload);
+      }
+
+      resetStudentForm(studentForm.classId);
       await loadStudents(selected.id);
       await loadDashboard(selected.id);
-      setAlerts(["Eleve inscrit dans la classe selectionnee."]);
+      setAlerts([
+        wasEditing
+          ? "Dossier eleve modifie avec ses responsables et son inscription."
+          : "Eleve inscrit dans la classe selectionnee."
+      ]);
     } catch (error) {
-      setAlerts([errorMessage(error, "Inscription impossible. Verifier les champs et l'API.")]);
+      setAlerts([errorMessage(error, "Enregistrement impossible. Verifier les champs et l'API.")]);
     } finally {
       setStudentSaving(false);
     }
@@ -3069,17 +3182,27 @@ export function SchoolDashboard() {
               <div className="student-workspace">
                 <form className="settings-block student-enrollment-form" onSubmit={handleCreateStudent}>
                   <div className="section-title">
-                    <strong>Nouvelle inscription</strong>
-                    <span>{activeYear ? `Annee : ${activeYear.name}` : "Classe requise"}</span>
+                    <strong>{editingStudent ? "Modification du dossier" : "Nouvelle inscription"}</strong>
+                    <span>
+                      {editingStudent
+                        ? editingStudent.matricule
+                        : activeYear
+                          ? `Annee : ${activeYear.name}`
+                          : "Classe requise"}
+                    </span>
                   </div>
                   <div className="setup-form">
                     <label className="field full">
-                      <span>Matricule genere</span>
+                      <span>{editingStudent ? "Matricule du dossier" : "Matricule genere"}</span>
                       <input
                         readOnly
-                        value={previewStudentMatricule(selected, activeYear)}
+                        value={editingStudent?.matricule ?? previewStudentMatricule(selected, activeYear)}
                       />
-                      <small>Genere automatiquement selon le format de l'etablissement.</small>
+                      <small>
+                        {editingStudent
+                          ? "Le matricule reste verrouille pour eviter les doublons."
+                          : "Genere automatiquement selon le format de l'etablissement."}
+                      </small>
                     </label>
                     <label className="field">
                       <span className="required">Prenom</span>
@@ -3191,6 +3314,27 @@ export function SchoolDashboard() {
                         <option value="TRANSFER">Transfert</option>
                       </select>
                     </label>
+                    {editingStudent ? (
+                      <label className="field full">
+                        <span className="required">Statut du dossier</span>
+                        <select
+                          disabled={!selected || studentSaving}
+                          value={studentForm.status}
+                          onChange={(event) =>
+                            setStudentForm({
+                              ...studentForm,
+                              status: event.target.value as Student["status"]
+                            })
+                          }
+                        >
+                          <option value="ACTIVE">Actif</option>
+                          <option value="TRANSFERRED">Transfere</option>
+                          <option value="DROPPED_OUT">Abandon</option>
+                          <option value="EXCLUDED">Exclu</option>
+                          <option value="GRADUATED">Diplome</option>
+                        </select>
+                      </label>
+                    ) : null}
                     <GuardianFields
                       disabled={!selected || studentSaving}
                       required
@@ -3210,10 +3354,22 @@ export function SchoolDashboard() {
                         setStudentForm({ ...studentForm, secondaryGuardian: guardian })
                       }
                     />
-                    <button className="primary-button field full" disabled={!selected || studentSaving} type="submit">
-                      {studentSaving ? <Loader2 size={17} /> : <Plus size={17} />}
-                      Inscrire l'eleve
-                    </button>
+                    <div className="student-form-actions field full">
+                      {editingStudent ? (
+                        <button
+                          className="ghost-button"
+                          disabled={studentSaving}
+                          type="button"
+                          onClick={() => resetStudentForm()}
+                        >
+                          Annuler
+                        </button>
+                      ) : null}
+                      <button className="primary-button" disabled={!selected || studentSaving} type="submit">
+                        {studentSaving ? <Loader2 size={17} /> : editingStudent ? <Save size={17} /> : <Plus size={17} />}
+                        {editingStudent ? "Modifier le dossier" : "Inscrire l'eleve"}
+                      </button>
+                    </div>
                   </div>
                 </form>
 
@@ -3266,6 +3422,7 @@ export function SchoolDashboard() {
                             <th>Responsable</th>
                             <th>Docs</th>
                             <th>Statut</th>
+                            <th>Actions</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -3299,9 +3456,40 @@ export function SchoolDashboard() {
                                 </td>
                                 <td>{student.documents?.length ?? 0}</td>
                                 <td>
-                                  <span className="status-badge active">
-                                    {student.status === "ACTIVE" ? "Actif" : student.status}
+                                  <span className={`status-badge ${studentStatusClass(student.status)}`}>
+                                    {studentStatusLabel(student.status)}
                                   </span>
+                                </td>
+                                <td>
+                                  <div className="table-action-row">
+                                    <button
+                                      className="ghost-button small"
+                                      disabled={studentSaving}
+                                      type="button"
+                                      onClick={() => handleEditStudent(student)}
+                                    >
+                                      Modifier
+                                    </button>
+                                    {student.status === "ACTIVE" ? (
+                                      <button
+                                        className="ghost-button small danger-button"
+                                        disabled={studentSaving}
+                                        type="button"
+                                        onClick={() => void handleStudentStatus(student, "DROPPED_OUT")}
+                                      >
+                                        Sortir
+                                      </button>
+                                    ) : (
+                                      <button
+                                        className="ghost-button small"
+                                        disabled={studentSaving}
+                                        type="button"
+                                        onClick={() => void handleStudentStatus(student, "ACTIVE")}
+                                      >
+                                        Reactiver
+                                      </button>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             );

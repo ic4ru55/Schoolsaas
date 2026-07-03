@@ -105,7 +105,7 @@ Le projet n'est pas encore un produit utilisable par une ecole.
 Il manque encore :
 
 - authentification complete ;
-- vrais ecrans CRUD pour classes, eleves, parents, enseignants ;
+- vrais ecrans CRUD complets pour tous les modules restants ;
 - inscriptions et reinscriptions ;
 - paiements reels avec recus PDF ;
 - notes et bulletins PDF ;
@@ -165,6 +165,7 @@ Etat actuel :
 - creation niveaux : ajoutee ;
 - creation matieres : ajoutee ;
 - creation classes pour l'annee active : ajoutee ;
+- ajout de la scolarite et des tranches depuis la creation d'une classe : ajoute ;
 - affectation matiere a classe avec coefficient : ajoutee ;
 - enseignants avec taux horaire : ajoute ;
 - affectation enseignants aux matieres/classes : ajoutee.
@@ -186,6 +187,18 @@ Resultat attendu :
 
 - le secretariat peut gerer les dossiers eleves.
 
+Etat actuel :
+
+- liste des eleves : ajoutee ;
+- recherche par nom, matricule, classe et contact parent : ajoutee ;
+- matricule automatique selon le format de l'etablissement : ajoute ;
+- creation eleve avec inscription dans une classe : ajoutee ;
+- modification du dossier eleve : ajoutee ;
+- actions de statut eleve : ajoutees ;
+- parents/tuteurs principal et secondaire : ajoute ;
+- liaison eleve-parent : ajoutee ;
+- documents administratifs scannes : ajoutes dans un onglet separe.
+
 ## Etape 4 - Paiements
 
 Objectif : commencer la partie vendable pour les ecoles privees.
@@ -202,6 +215,15 @@ A faire :
 Resultat attendu :
 
 - le caissier peut encaisser et imprimer un recu.
+
+Etat actuel :
+
+- frais par classe : ajoute ;
+- tranches de scolarite depuis la classe : ajoutees ;
+- modification et suppression des frais : ajoutees ;
+- paiement partiel et reste a payer : ajoute ;
+- alertes de paiement : ajoutees ;
+- recu imprimable avec logo, cachet et signature caisse : ajoute.
 
 ## Etape 5 - Notes et bulletins
 
@@ -261,11 +283,11 @@ Resultat attendu :
 La prochaine action concrete est :
 
 ```text
-Etape 1 : parametrage etablissement + annee scolaire active.
+Etape 5 : notes, periodes et bulletins.
 ```
 
 Pourquoi :
 
-- c'est la base de tout le reste ;
-- les classes, eleves, paiements et notes dependent d'un etablissement et d'une annee scolaire ;
-- cela permet d'avoir une application deja coherente avant d'ajouter les gros modules.
+- parametrage, structure scolaire, eleves, documents, enseignants et paiements MVP sont deja amorces ;
+- les bulletins ont besoin des classes, matieres, coefficients et enseignants deja en place ;
+- c'est le prochain gros module metier avant les imports Excel et les sauvegardes.
