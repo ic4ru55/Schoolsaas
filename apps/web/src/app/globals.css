@@ -627,12 +627,12 @@ select {
   border-bottom: 0;
 }
 
-.student-table tbody tr {
+.student-table.clickable tbody tr {
   cursor: pointer;
 }
 
-.student-table tbody tr:hover,
-.student-table tbody tr.selected {
+.student-table.clickable tbody tr:hover,
+.student-table.clickable tbody tr.selected {
   background: #f0f6f2;
 }
 
@@ -674,6 +674,23 @@ select {
   padding-top: 16px;
 }
 
+.document-workspace {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.85fr) minmax(0, 1.15fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.document-panel.standalone {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.document-student-table {
+  max-height: 520px;
+}
+
 .document-list {
   display: grid;
   gap: 10px;
@@ -683,9 +700,9 @@ select {
 }
 
 .document-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -693,14 +710,71 @@ select {
   padding: 10px 12px;
 }
 
-.document-row strong,
-.document-row span {
+.document-main {
+  min-width: 0;
+}
+
+.document-main strong,
+.document-main span,
+.document-main small {
   display: block;
+}
+
+.document-main strong,
+.document-main span {
   font-size: 13px;
 }
 
-.document-row span {
+.document-main span,
+.document-main small {
   color: var(--muted);
+}
+
+.document-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-main small {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.document-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.document-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.document-action-button:hover {
+  border-color: #115e35;
+  color: var(--green);
+}
+
+.document-action-button.danger:hover {
+  border-color: var(--wine);
+  color: var(--wine);
+}
+
+.document-action-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .status-badge {
@@ -844,6 +918,10 @@ select {
   .structure-grid {
     grid-template-columns: 1fr;
   }
+
+  .document-workspace {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 680px) {
@@ -869,9 +947,14 @@ select {
   .metrics-grid,
   .module-grid,
   .structure-grid,
+  .document-row,
   .setup-form,
   .student-list-tools,
   .nav-section {
     grid-template-columns: 1fr;
+  }
+
+  .document-actions {
+    justify-content: flex-start;
   }
 }

@@ -127,6 +127,10 @@ export type DashboardSummary = {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
 
+function apiPath(path: string) {
+  return `${API_URL}${path}`;
+}
+
 function stripEmptyStrings<T extends Record<string, unknown>>(input: T) {
   return Object.fromEntries(
     Object.entries(input).filter(([, value]) => value !== "")
@@ -155,7 +159,7 @@ function apiErrorMessage(body: unknown, fallback: string) {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await fetch(apiPath(path), {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -360,6 +364,18 @@ export function getStudentDocuments(establishmentId: string, studentId: string) 
   );
 }
 
+export function studentDocumentFileUrl(
+  establishmentId: string,
+  studentId: string,
+  documentId: string,
+  download = false
+) {
+  const path = `/establishments/${encodeURIComponent(establishmentId)}/students/${encodeURIComponent(
+    studentId
+  )}/documents/${encodeURIComponent(documentId)}/file`;
+  return apiPath(download ? `${path}?download=1` : path);
+}
+
 export function uploadStudentDocument(
   establishmentId: string,
   studentId: string,
@@ -376,6 +392,19 @@ export function uploadStudentDocument(
     {
       method: "POST",
       body: JSON.stringify(stripEmptyStrings(input))
+    }
+  );
+}
+
+export function deleteStudentDocument(
+  establishmentId: string,
+  studentId: string,
+  documentId: string
+) {
+  return request<{ id: string; deleted: boolean }>(
+    `/establishments/${establishmentId}/students/${studentId}/documents/${documentId}`,
+    {
+      method: "DELETE"
     }
   );
 }

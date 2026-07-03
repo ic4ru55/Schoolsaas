@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, Query } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { CreateStudentDocumentDto } from "./dto/create-student-document.dto";
 import { CreateStudentDto } from "./dto/create-student.dto";
@@ -33,6 +33,21 @@ export class StudentsController {
     return this.studentsService.findDocuments(establishmentId, studentId);
   }
 
+  @Get(":studentId/documents/:documentId/file")
+  getDocumentFile(
+    @Param("establishmentId") establishmentId: string,
+    @Param("studentId") studentId: string,
+    @Param("documentId") documentId: string,
+    @Query("download") download?: string
+  ) {
+    return this.studentsService.getDocumentFile(
+      establishmentId,
+      studentId,
+      documentId,
+      download === "1"
+    );
+  }
+
   @Post(":studentId/documents")
   uploadDocument(
     @Param("establishmentId") establishmentId: string,
@@ -40,5 +55,14 @@ export class StudentsController {
     @Body() dto: CreateStudentDocumentDto
   ) {
     return this.studentsService.uploadDocument(establishmentId, studentId, dto);
+  }
+
+  @Delete(":studentId/documents/:documentId")
+  deleteDocument(
+    @Param("establishmentId") establishmentId: string,
+    @Param("studentId") studentId: string,
+    @Param("documentId") documentId: string
+  ) {
+    return this.studentsService.deleteDocument(establishmentId, studentId, documentId);
   }
 }

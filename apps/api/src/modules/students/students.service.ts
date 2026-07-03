@@ -1,7 +1,8 @@
 import { randomUUID } from "crypto";
-import { mkdir, writeFile } from "fs/promises";
+import { createReadStream } from "fs";
+import { mkdir, stat, unlink, writeFile } from "fs/promises";
 import { extname, join } from "path";
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, StreamableFile } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateStudentDocumentDto } from "./dto/create-student-document.dto";
 import { CreateStudentDto } from "./dto/create-student.dto";
@@ -47,6 +48,11 @@ function safeFileStem(value: string) {
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 80) || "document";
+}
+
+function safeDownloadName(originalName: string, mimeType: string) {
+  const extension = extname(originalName) || MIME_EXTENSIONS[mimeType] || "";
+  return `${safeFileStem(originalName)}${extension}`;
 }
 
 function decodeBase64File(value: string) {
@@ -260,6 +266,43 @@ export class StudentsService {
     });
   }
 
+  async getDocumentFile(
+    establishmentId: string,
+    studentId: string,
+    documentId: string,
+    download = false
+  ) {
+    const document = await this.prisma.studentDocument.findFirst({
+      where: {
+        id: documentId,
+        establishmentId,
+        studentId
+      }
+    });
+
+    if (!document) {
+      throw new NotFoundException("Document introuvable.");
+    }
+
+    const absolutePath = join(process.cwd(), document.storagePath);
+    let fileStats: Awaited<ReturnType<typeof stat>>;
+    try {
+      fileStats = await stat(absolutePath);
+    } catch {
+      throw new NotFoundException("Fichier introuvable sur le disque.");
+    }
+
+    const disposition = download ? "attachment" : "inline";
+    return new StreamableFile(createReadStream(absolutePath), {
+      type: document.mimeType,
+      disposition: `${disposition}; filename="${safeDownloadName(
+        document.originalName,
+        document.mimeType
+      )}"`,
+      length: fileStats.size
+    });
+  }
+
   async uploadDocument(
     establishmentId: string,
     studentId: string,
@@ -318,5 +361,33 @@ export class StudentsService {
         storagePath
       }
     });
+  }
+
+  async deleteDocument(establishmentId: string, studentId: string, documentId: string) {
+    const document = await this.prisma.studentDocument.findFirst({
+      where: {
+        id: documentId,
+        establishmentId,
+        studentId
+      }
+    });
+
+    if (!document) {
+      throw new NotFoundException("Document introuvable.");
+    }
+
+    try {
+      await unlink(join(process.cwd(), document.storagePath));
+    } catch {
+      // Le fichier peut deja manquer sur disque ; le dossier administratif doit rester nettoyable.
+    }
+
+    await this.prisma.studentDocument.delete({
+      where: {
+        id: documentId
+      }
+    });
+
+    return { id: documentId, deleted: true };
   }
 }

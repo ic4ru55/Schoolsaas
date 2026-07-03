@@ -8,7 +8,10 @@ import {
   CalendarDays,
   CheckCircle2,
   CloudUpload,
+  Download,
+  Eye,
   FileSpreadsheet,
+  FileText,
   GraduationCap,
   LayoutDashboard,
   LibraryBig,
@@ -19,6 +22,8 @@ import {
   Save,
   Settings,
   ShieldCheck,
+  Printer,
+  Trash2,
   Users
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
@@ -32,6 +37,7 @@ import {
   createLevel,
   createStudent,
   createSubject,
+  deleteStudentDocument,
   Establishment,
   getClasses,
   getDashboard,
@@ -44,6 +50,7 @@ import {
   SchoolClass,
   Student,
   StudentDocument,
+  studentDocumentFileUrl,
   Subject,
   uploadStudentDocument,
   updateEstablishment
@@ -54,6 +61,7 @@ type AppView =
   | "settings"
   | "structure"
   | "students"
+  | "documents"
   | "payments"
   | "grades"
   | "imports"
@@ -97,6 +105,7 @@ const navItems = [
   { label: "Tableau de bord", icon: LayoutDashboard, view: "dashboard" },
   { label: "Parametrage", icon: Settings, view: "settings" },
   { label: "Eleves", icon: GraduationCap, view: "students" },
+  { label: "Documents", icon: FileText, view: "documents" },
   { label: "Classes", icon: LibraryBig, view: "structure" },
   { label: "Paiements", icon: Banknote, view: "payments" },
   { label: "Notes", icon: BookOpen, view: "grades" },
@@ -167,6 +176,23 @@ function formatFileSize(size: number) {
   return `${(size / (1024 * 1024)).toFixed(1)} Mo`;
 }
 
+function documentDisplayName(document: StudentDocument) {
+  return document.label || document.originalName;
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;"
+    };
+    return entities[character];
+  });
+}
+
 function matriculeYear(value?: string | null) {
   return value?.match(/\d{4}/)?.[0] ?? new Date().getFullYear().toString();
 }
@@ -202,6 +228,7 @@ export function SchoolDashboard() {
   const [structureSaving, setStructureSaving] = useState(false);
   const [studentSaving, setStudentSaving] = useState(false);
   const [documentSaving, setDocumentSaving] = useState(false);
+  const [documentActionId, setDocumentActionId] = useState("");
   const [levels, setLevels] = useState<Level[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [classes, setClasses] = useState<SchoolClass[]>([]);
@@ -882,6 +909,97 @@ export function SchoolDashboard() {
       setAlerts([errorMessage(error, "Enregistrement du document impossible.")]);
     } finally {
       setDocumentSaving(false);
+    }
+  }
+
+  function currentStudentDocumentFileUrl(studentDocument: StudentDocument, download = false) {
+    if (!selected || !selectedDocumentStudent) {
+      return "#";
+    }
+
+    return studentDocumentFileUrl(
+      selected.id,
+      selectedDocumentStudent.id,
+      studentDocument.id,
+      download
+    );
+  }
+
+  function handlePrintStudentDocument(studentDocument: StudentDocument) {
+    if (!selected || !selectedDocumentStudent) {
+      setAlerts(["Selectionner un eleve avant d'imprimer un document."]);
+      return;
+    }
+
+    const fileUrl = currentStudentDocumentFileUrl(studentDocument);
+    const title = documentDisplayName(studentDocument);
+    const printWindow = window.open("", "_blank", "width=1000,height=800");
+
+    if (!printWindow) {
+      setAlerts(["Fenetre d'impression bloquee. Autoriser les popups pour imprimer."]);
+      return;
+    }
+
+    const safeTitle = escapeHtml(title);
+    const safeUrl = escapeHtml(fileUrl);
+    const previewMarkup = studentDocument.mimeType.startsWith("image/")
+      ? `<img src="${safeUrl}" alt="${safeTitle}" onload="setTimeout(function(){ window.print(); }, 300)" />`
+      : `<iframe src="${safeUrl}" title="${safeTitle}" onload="setTimeout(function(){ window.print(); }, 700)"></iframe>`;
+
+    printWindow.document.write(`<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>${safeTitle}</title>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; color: #07130d; }
+    header { padding: 12px 16px; border-bottom: 1px solid #d7ded7; }
+    h1 { margin: 0; font-size: 16px; }
+    p { margin: 4px 0 0; color: #637065; font-size: 12px; }
+    iframe { width: 100vw; height: calc(100vh - 58px); border: 0; }
+    img { display: block; max-width: 100%; max-height: calc(100vh - 58px); margin: 0 auto; }
+    @media print {
+      header { display: none; }
+      iframe, img { height: 100vh; max-height: 100vh; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>${safeTitle}</h1>
+    <p>${escapeHtml(selectedDocumentStudent.matricule)} - ${escapeHtml(
+      selectedDocumentStudent.lastName
+    )} ${escapeHtml(selectedDocumentStudent.firstName)}</p>
+  </header>
+  ${previewMarkup}
+</body>
+</html>`);
+    printWindow.document.close();
+  }
+
+  async function handleDeleteStudentDocument(studentDocument: StudentDocument) {
+    if (!selected || !selectedDocumentStudent) {
+      setAlerts(["Selectionner un eleve avant de supprimer un document."]);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Supprimer le document "${documentDisplayName(studentDocument)}" du dossier ?`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDocumentActionId(studentDocument.id);
+    try {
+      await deleteStudentDocument(selected.id, selectedDocumentStudent.id, studentDocument.id);
+      await loadStudentDocuments(selected.id, selectedDocumentStudent.id);
+      await loadStudents(selected.id);
+      setAlerts(["Document supprime du dossier de l'eleve."]);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Suppression du document impossible.")]);
+    } finally {
+      setDocumentActionId("");
     }
   }
 
@@ -1798,11 +1916,7 @@ export function SchoolDashboard() {
                             const primaryGuardian =
                               student.guardians?.find((item) => item.isPrimary) ?? student.guardians?.[0];
                             return (
-                              <tr
-                                className={selectedDocumentStudentId === student.id ? "selected" : ""}
-                                key={student.id}
-                                onClick={() => setSelectedDocumentStudentId(student.id)}
-                              >
+                              <tr key={student.id}>
                                 <td>
                                   <strong>{student.matricule}</strong>
                                 </td>
@@ -1840,9 +1954,123 @@ export function SchoolDashboard() {
                       <div className="empty-state compact">Aucun eleve trouve.</div>
                     )}
                   </div>
-                  <div className="document-panel">
+                </div>
+              </div>
+            </div>
+            ) : null}
+
+            {activeView === "documents" ? (
+            <div className="panel">
+              <div className="panel-header">
+                <div>
+                  <h2>Documents administratifs</h2>
+                  <span>Pieces scannees, visualisation et impression</span>
+                </div>
+                <FileText size={20} />
+              </div>
+
+              {alerts.length ? (
+                <div className="inline-alerts">
+                  {alerts.map((alert) => (
+                    <div className="alert-item" key={alert}>
+                      <AlertTriangle size={18} />
+                      <span>{alert}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              <div className="document-workspace">
+                <div className="settings-block document-student-picker">
+                  <div className="section-title">
+                    <strong>Dossiers eleves</strong>
+                    <span>{filteredStudents.length} resultat(s)</span>
+                  </div>
+                  <div className="student-list-tools">
+                    <label className="field">
+                      <span>Recherche</span>
+                      <input
+                        list="student-document-search-suggestions"
+                        placeholder="Nom, matricule, parent"
+                        value={studentSearch}
+                        onChange={(event) => setStudentSearch(event.target.value)}
+                      />
+                      <datalist id="student-document-search-suggestions">
+                        {students.map((student) => (
+                          <option
+                            key={student.id}
+                            value={`${student.matricule} - ${student.lastName} ${student.firstName}`}
+                          />
+                        ))}
+                      </datalist>
+                    </label>
+                    <label className="field">
+                      <span>Classe</span>
+                      <select
+                        value={studentClassFilter}
+                        onChange={(event) => setStudentClassFilter(event.target.value)}
+                      >
+                        <option value="">Toutes les classes</option>
+                        {activeClasses.map((schoolClass) => (
+                          <option key={schoolClass.id} value={schoolClass.id}>
+                            {schoolClass.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="student-table-wrap document-student-table">
+                    {filteredStudents.length ? (
+                      <table className="student-table clickable">
+                        <thead>
+                          <tr>
+                            <th>Matricule</th>
+                            <th>Eleve</th>
+                            <th>Classe</th>
+                            <th>Docs</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredStudents.map((student) => {
+                            const enrollment = student.enrollments?.[0];
+                            return (
+                              <tr
+                                className={selectedDocumentStudentId === student.id ? "selected" : ""}
+                                key={student.id}
+                                onClick={() => setSelectedDocumentStudentId(student.id)}
+                              >
+                                <td>
+                                  <strong>{student.matricule}</strong>
+                                </td>
+                                <td>
+                                  <strong>
+                                    {student.lastName} {student.firstName}
+                                  </strong>
+                                  <span>
+                                    {student.gender === "FEMALE"
+                                      ? "Fille"
+                                      : student.gender === "MALE"
+                                        ? "Garcon"
+                                        : "Sexe non renseigne"}
+                                  </span>
+                                </td>
+                                <td>{enrollment?.class?.name ?? "Aucune classe"}</td>
+                                <td>{student.documents?.length ?? 0}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div className="empty-state compact">Aucun eleve trouve.</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="settings-block document-management-panel">
+                  <div className="document-panel standalone">
                     <div className="section-title">
-                      <strong>Documents administratifs</strong>
+                      <strong>Pieces du dossier</strong>
                       <span>
                         {selectedDocumentStudent
                           ? `${selectedDocumentStudent.lastName} ${selectedDocumentStudent.firstName}`
@@ -1922,15 +2150,57 @@ export function SchoolDashboard() {
                     </form>
                     <div className="document-list">
                       {studentDocuments.length ? (
-                        studentDocuments.map((document) => (
-                          <div className="document-row" key={document.id}>
-                            <div>
-                              <strong>{documentTypeLabel(document.documentType)}</strong>
-                              <span>
-                                {document.label || document.originalName} - {formatFileSize(document.sizeBytes)}
-                              </span>
+                        studentDocuments.map((studentDocument) => (
+                          <div className="document-row" key={studentDocument.id}>
+                            <div className="document-main">
+                              <strong>{documentTypeLabel(studentDocument.documentType)}</strong>
+                              <span>{documentDisplayName(studentDocument)}</span>
+                              <small>
+                                {formatFileSize(studentDocument.sizeBytes)} -{" "}
+                                {new Date(studentDocument.createdAt).toLocaleDateString("fr-FR")}
+                              </small>
                             </div>
-                            <span>{new Date(document.createdAt).toLocaleDateString("fr-FR")}</span>
+                            <div className="document-actions">
+                              <a
+                                className="document-action-button"
+                                href={currentStudentDocumentFileUrl(studentDocument)}
+                                target="_blank"
+                                rel="noreferrer"
+                                title="Visualiser"
+                              >
+                                <Eye size={16} />
+                              </a>
+                              <button
+                                className="document-action-button"
+                                type="button"
+                                title="Imprimer"
+                                onClick={() => handlePrintStudentDocument(studentDocument)}
+                              >
+                                <Printer size={16} />
+                              </button>
+                              <a
+                                className="document-action-button"
+                                href={currentStudentDocumentFileUrl(studentDocument, true)}
+                                target="_blank"
+                                rel="noreferrer"
+                                title="Telecharger"
+                              >
+                                <Download size={16} />
+                              </a>
+                              <button
+                                className="document-action-button danger"
+                                disabled={documentActionId === studentDocument.id}
+                                type="button"
+                                title="Supprimer"
+                                onClick={() => void handleDeleteStudentDocument(studentDocument)}
+                              >
+                                {documentActionId === studentDocument.id ? (
+                                  <Loader2 size={16} />
+                                ) : (
+                                  <Trash2 size={16} />
+                                )}
+                              </button>
+                            </div>
                           </div>
                         ))
                       ) : (
@@ -2054,7 +2324,8 @@ export function SchoolDashboard() {
             {activeView !== "dashboard" &&
             activeView !== "settings" &&
             activeView !== "structure" &&
-            activeView !== "students" ? (
+            activeView !== "students" &&
+            activeView !== "documents" ? (
               <ComingSoonView view={activeView} />
             ) : null}
           </section>
@@ -2374,13 +2645,9 @@ function MetricCard({
 
 function ComingSoonView({ view }: { view: AppView }) {
   const labels: Record<
-    Exclude<AppView, "dashboard" | "settings" | "structure">,
+    Exclude<AppView, "dashboard" | "settings" | "structure" | "students" | "documents">,
     { title: string; detail: string }
   > = {
-    students: {
-      title: "Eleves",
-      detail: "Inscriptions, parents et dossiers eleves"
-    },
     payments: {
       title: "Paiements",
       detail: "Tranches, recus et restes a payer"
@@ -2403,7 +2670,8 @@ function ComingSoonView({ view }: { view: AppView }) {
     }
   };
 
-  const content = labels[view as Exclude<AppView, "dashboard" | "settings" | "structure">];
+  const content =
+    labels[view as Exclude<AppView, "dashboard" | "settings" | "structure" | "students" | "documents">];
 
   return (
     <div className="panel">
