@@ -144,6 +144,10 @@ function apiErrorMessage(body: unknown, fallback: string) {
   }
 
   if (typeof message === "string") {
+    if (message.toLowerCase().includes("request entity too large")) {
+      return "Document trop volumineux. Choisir un fichier de 8 Mo maximum.";
+    }
+
     return message;
   }
 
@@ -168,7 +172,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       body = null;
     }
 
-    throw new Error(apiErrorMessage(body, `API error ${response.status}`));
+    const fallback =
+      response.status === 413
+        ? "Document trop volumineux. Choisir un fichier de 8 Mo maximum."
+        : `API error ${response.status}`;
+    throw new Error(apiErrorMessage(body, fallback));
   }
 
   return response.json() as Promise<T>;
