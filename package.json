@@ -1,0 +1,35 @@
+{
+  "name": "schoolsaas-bf",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Plateforme hybride de gestion scolaire et universitaire adaptee au Burkina Faso.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm --workspace packages/shared run build && ts-node -P apps/api/tsconfig.json apps/api/src/main.ts",
+    "dev:web": "npm --workspace apps/web run dev",
+    "dev:worker": "npm --workspace apps/worker run dev",
+    "build": "npm run build:shared && npm run build:api && npm run build:web && npm run build:worker",
+    "build:shared": "npm --workspace packages/shared run build",
+    "build:api": "npm --workspace apps/api run build",
+    "build:web": "npm --workspace apps/web run build",
+    "build:worker": "npm --workspace apps/worker run build",
+    "lint": "npm run build:shared && npm run lint:shared && npm run lint:api && npm run lint:web && npm run lint:worker",
+    "lint:shared": "npm --workspace packages/shared run lint",
+    "lint:api": "npm --workspace apps/api run lint",
+    "lint:web": "npm --workspace apps/web run lint",
+    "lint:worker": "npm --workspace apps/worker run lint",
+    "db:generate": "prisma generate --schema apps/api/prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --name init --schema apps/api/prisma/schema.prisma",
+    "db:studio": "prisma studio --schema apps/api/prisma/schema.prisma"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "devDependencies": {
+    "rxjs": "^7.8.2"
+  }
+}

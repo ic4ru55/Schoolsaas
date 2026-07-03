@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.next/
+.turbo/
+.env
+.env.local
+.env.*.local
+coverage/
+data/
+storage/
+*.log
+*.tsbuildinfo
+package-lock.json

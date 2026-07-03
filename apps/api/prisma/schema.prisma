@@ -1,0 +1,635 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum EstablishmentType {
+  PRIMARY
+  COLLEGE
+  HIGH_SCHOOL
+  INSTITUTE
+  UNIVERSITY
+  TRAINING_CENTER
+}
+
+enum AcademicYearStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum StudentStatus {
+  ACTIVE
+  TRANSFERRED
+  DROPPED_OUT
+  EXCLUDED
+  GRADUATED
+}
+
+enum Gender {
+  FEMALE
+  MALE
+}
+
+enum EnrollmentType {
+  NEW
+  REENROLLMENT
+  TRANSFER
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  CANCELLED
+  COMPLETED
+}
+
+enum LicenseStatus {
+  TRIAL
+  ACTIVE
+  EXPIRED
+  SUSPENDED
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  MOBILE_MONEY
+  CHECK
+  OTHER
+}
+
+enum BackupStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+model Establishment {
+  id                   String             @id @default(uuid())
+  name                 String
+  legalName            String?
+  type                 EstablishmentType
+  address              String?
+  city                 String?
+  country              String             @default("Burkina Faso")
+  phone                String?
+  email                String?
+  logoUrl              String?
+  stampUrl             String?
+  motto                String?
+  currency             String             @default("XOF")
+  activeAcademicYearId String?
+  studentMatriculePrefix     String       @default("SB")
+  studentMatriculeFormat     String       @default("{PREFIX}-{YEAR}-{SEQ}")
+  studentMatriculeNextNumber Int          @default(1)
+  studentMatriculePadding    Int          @default(4)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  academicYears        AcademicYear[]
+  levels               Level[]
+  classes              SchoolClass[]
+  subjects             Subject[]
+  students             Student[]
+  guardians            Guardian[]
+  studentDocuments     StudentDocument[]
+  teachers             Teacher[]
+  licenses             License[]
+  modules              EnabledModule[]
+  auditLogs            AuditLog[]
+  payments             Payment[]
+  backupJobs           BackupJob[]
+}
+
+model License {
+  id              String        @id @default(uuid())
+  establishmentId String
+  planCode        String
+  status          LicenseStatus @default(TRIAL)
+  startsAt        DateTime      @default(now())
+  expiresAt       DateTime?
+  maxStudents     Int?
+  lastCheckAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  establishment   Establishment @relation(fields: [establishmentId], references: [id])
+
+  @@index([establishmentId])
+}
+
+model EnabledModule {
+  id              String        @id @default(uuid())
+  establishmentId String
+  moduleCode      String
+  enabled         Boolean       @default(true)
+  source          String        @default("license")
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  establishment   Establishment @relation(fields: [establishmentId], references: [id])
+
+  @@unique([establishmentId, moduleCode])
+}
+
+model User {
+  id           String     @id @default(uuid())
+  fullName     String
+  email        String     @unique
+  phone        String?
+  passwordHash String
+  status       String     @default("active")
+  lastLoginAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  roles        UserRole[]
+  auditLogs    AuditLog[]
+  teachers     Teacher[]
+}
+
+model Role {
+  id              String           @id @default(uuid())
+  establishmentId String?
+  code            String
+  name            String
+  description     String?
+  systemRole      Boolean          @default(false)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  permissions     RolePermission[]
+  users           UserRole[]
+
+  @@unique([establishmentId, code])
+}
+
+model Permission {
+  id          String           @id @default(uuid())
+  code        String           @unique
+  name        String
+  moduleCode  String
+  description String?
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  id           String     @id @default(uuid())
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id])
+  permission   Permission @relation(fields: [permissionId], references: [id])
+
+  @@unique([roleId, permissionId])
+}
+
+model UserRole {
+  id              String  @id @default(uuid())
+  userId          String
+  establishmentId String?
+  roleId          String
+  user            User    @relation(fields: [userId], references: [id])
+  role            Role    @relation(fields: [roleId], references: [id])
+
+  @@unique([userId, establishmentId, roleId])
+}
+
+model AcademicYear {
+  id              String             @id @default(uuid())
+  establishmentId String
+  name            String
+  startsAt        DateTime
+  endsAt          DateTime
+  status          AcademicYearStatus @default(DRAFT)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  establishment   Establishment      @relation(fields: [establishmentId], references: [id])
+  periods         Period[]
+  classes         SchoolClass[]
+  enrollments     Enrollment[]
+  feeItems        FeeItem[]
+  payments        Payment[]
+
+  @@index([establishmentId, status])
+}
+
+model Period {
+  id              String       @id @default(uuid())
+  establishmentId String
+  academicYearId  String
+  name            String
+  type            String
+  startsAt        DateTime?
+  endsAt          DateTime?
+  lockedAt        DateTime?
+  academicYear    AcademicYear @relation(fields: [academicYearId], references: [id])
+  assessments     Assessment[]
+
+  @@index([establishmentId, academicYearId])
+}
+
+model Level {
+  id              String        @id @default(uuid())
+  establishmentId String
+  name            String
+  code            String?
+  orderIndex      Int           @default(0)
+  establishment   Establishment @relation(fields: [establishmentId], references: [id])
+  classes         SchoolClass[]
+  feeItems        FeeItem[]
+
+  @@unique([establishmentId, name])
+}
+
+model SchoolClass {
+  id              String         @id @default(uuid())
+  establishmentId String
+  academicYearId  String
+  levelId         String?
+  name            String
+  code            String?
+  capacity        Int?
+  mainTeacherId   String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  establishment   Establishment  @relation(fields: [establishmentId], references: [id])
+  academicYear    AcademicYear   @relation(fields: [academicYearId], references: [id])
+  level           Level?         @relation(fields: [levelId], references: [id])
+  mainTeacher     Teacher?       @relation("MainTeacherClasses", fields: [mainTeacherId], references: [id])
+  classSubjects   ClassSubject[]
+  enrollments     Enrollment[]
+  feeItems        FeeItem[]
+
+  @@unique([establishmentId, academicYearId, name])
+}
+
+model Subject {
+  id              String         @id @default(uuid())
+  establishmentId String
+  name            String
+  code            String?
+  subjectGroup    String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  establishment   Establishment  @relation(fields: [establishmentId], references: [id])
+  classSubjects   ClassSubject[]
+
+  @@unique([establishmentId, name])
+}
+
+model ClassSubject {
+  id              String       @id @default(uuid())
+  establishmentId String
+  classId         String
+  subjectId       String
+  teacherId       String?
+  coefficient     Decimal      @default(1)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  class           SchoolClass  @relation(fields: [classId], references: [id])
+  subject         Subject      @relation(fields: [subjectId], references: [id])
+  teacher         Teacher?     @relation(fields: [teacherId], references: [id])
+  assessments     Assessment[]
+
+  @@unique([classId, subjectId])
+  @@index([establishmentId])
+}
+
+model Student {
+  id              String                 @id @default(uuid())
+  establishmentId String
+  matricule       String
+  firstName       String
+  lastName        String
+  gender          Gender?
+  birthDate       DateTime?
+  birthPlace      String?
+  nationality     String?
+  photoUrl        String?
+  status          StudentStatus          @default(ACTIVE)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  establishment   Establishment          @relation(fields: [establishmentId], references: [id])
+  enrollments     Enrollment[]
+  guardians       StudentGuardian[]
+  documents       StudentDocument[]
+  grades          Grade[]
+  feeAssignments  StudentFeeAssignment[]
+  payments        Payment[]
+  reportCards     ReportCard[]
+
+  @@unique([establishmentId, matricule])
+  @@index([establishmentId, lastName, firstName])
+}
+
+model StudentDocument {
+  id              String        @id @default(uuid())
+  establishmentId String
+  studentId       String
+  documentType    String
+  label           String?
+  originalName    String
+  fileName        String
+  mimeType        String
+  sizeBytes       Int
+  storagePath     String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  establishment   Establishment @relation(fields: [establishmentId], references: [id])
+  student         Student       @relation(fields: [studentId], references: [id])
+
+  @@index([establishmentId, studentId])
+  @@index([establishmentId, documentType])
+}
+
+model Enrollment {
+  id              String           @id @default(uuid())
+  establishmentId String
+  studentId       String
+  academicYearId  String
+  classId         String
+  enrollmentType  EnrollmentType   @default(NEW)
+  status          EnrollmentStatus @default(ACTIVE)
+  repeated        Boolean          @default(false)
+  enrolledAt      DateTime         @default(now())
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  student         Student          @relation(fields: [studentId], references: [id])
+  academicYear    AcademicYear     @relation(fields: [academicYearId], references: [id])
+  class           SchoolClass      @relation(fields: [classId], references: [id])
+
+  @@unique([studentId, academicYearId])
+  @@index([establishmentId, classId])
+}
+
+model Guardian {
+  id              String            @id @default(uuid())
+  establishmentId String
+  firstName       String
+  lastName        String
+  phone           String?
+  email           String?
+  address         String?
+  profession      String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  establishment   Establishment     @relation(fields: [establishmentId], references: [id])
+  students        StudentGuardian[]
+
+  @@index([establishmentId, phone])
+}
+
+model StudentGuardian {
+  id              String   @id @default(uuid())
+  establishmentId String
+  studentId       String
+  guardianId      String
+  relationship    String
+  isPrimary       Boolean  @default(false)
+  student         Student  @relation(fields: [studentId], references: [id])
+  guardian        Guardian @relation(fields: [guardianId], references: [id])
+
+  @@unique([studentId, guardianId])
+}
+
+model Teacher {
+  id              String         @id @default(uuid())
+  establishmentId String
+  userId          String?
+  firstName       String
+  lastName        String
+  phone           String?
+  email           String?
+  status          String         @default("active")
+  employmentType  String         @default("vacataire")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  establishment   Establishment  @relation(fields: [establishmentId], references: [id])
+  user            User?          @relation(fields: [userId], references: [id])
+  classSubjects   ClassSubject[]
+  mainClasses     SchoolClass[]  @relation("MainTeacherClasses")
+
+  @@index([establishmentId, lastName, firstName])
+}
+
+model Assessment {
+  id              String       @id @default(uuid())
+  establishmentId String
+  academicYearId  String
+  periodId        String
+  classSubjectId  String
+  name            String
+  maxScore        Decimal      @default(20)
+  weight          Decimal      @default(1)
+  lockedAt        DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  period          Period       @relation(fields: [periodId], references: [id])
+  classSubject    ClassSubject @relation(fields: [classSubjectId], references: [id])
+  grades          Grade[]
+
+  @@index([establishmentId, periodId])
+}
+
+model Grade {
+  id              String           @id @default(uuid())
+  establishmentId String
+  assessmentId    String
+  studentId       String
+  score           Decimal
+  comment         String?
+  enteredBy       String?
+  validatedBy     String?
+  validatedAt     DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  assessment      Assessment       @relation(fields: [assessmentId], references: [id])
+  student         Student          @relation(fields: [studentId], references: [id])
+  changes         GradeChangeLog[]
+
+  @@unique([assessmentId, studentId])
+  @@index([establishmentId, studentId])
+}
+
+model GradeChangeLog {
+  id              String   @id @default(uuid())
+  establishmentId String
+  gradeId         String
+  changedBy       String?
+  oldScore        Decimal?
+  newScore        Decimal
+  reason          String?
+  createdAt       DateTime @default(now())
+  grade           Grade    @relation(fields: [gradeId], references: [id])
+
+  @@index([establishmentId, gradeId])
+}
+
+model ReportCard {
+  id              String   @id @default(uuid())
+  establishmentId String
+  studentId       String
+  academicYearId  String
+  periodId        String
+  classId         String
+  average         Decimal?
+  rank            Int?
+  decision        String?
+  pdfUrl          String?
+  generatedBy     String?
+  generatedAt     DateTime @default(now())
+  student         Student  @relation(fields: [studentId], references: [id])
+
+  @@index([establishmentId, periodId, classId])
+}
+
+model FeeItem {
+  id              String                 @id @default(uuid())
+  establishmentId String
+  academicYearId  String
+  levelId         String?
+  classId         String?
+  name            String
+  amount          Decimal
+  dueDate         DateTime?
+  required        Boolean                @default(true)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  academicYear    AcademicYear           @relation(fields: [academicYearId], references: [id])
+  level           Level?                 @relation(fields: [levelId], references: [id])
+  class           SchoolClass?           @relation(fields: [classId], references: [id])
+  assignments     StudentFeeAssignment[]
+
+  @@index([establishmentId, academicYearId])
+}
+
+model StudentFeeAssignment {
+  id                String              @id @default(uuid())
+  establishmentId   String
+  studentId         String
+  academicYearId    String
+  feeItemId         String
+  amountDue         Decimal
+  discountAmount    Decimal             @default(0)
+  scholarshipAmount Decimal             @default(0)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  student           Student             @relation(fields: [studentId], references: [id])
+  feeItem           FeeItem             @relation(fields: [feeItemId], references: [id])
+  allocations       PaymentAllocation[]
+
+  @@unique([studentId, feeItemId])
+}
+
+model Payment {
+  id              String              @id @default(uuid())
+  establishmentId String
+  studentId       String
+  academicYearId  String
+  amount          Decimal
+  method          PaymentMethod       @default(CASH)
+  reference       String?
+  receiptNumber   String
+  paidAt          DateTime            @default(now())
+  receivedBy      String?
+  cancelledAt     DateTime?
+  cancelReason    String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  establishment   Establishment       @relation(fields: [establishmentId], references: [id])
+  student         Student             @relation(fields: [studentId], references: [id])
+  academicYear    AcademicYear        @relation(fields: [academicYearId], references: [id])
+  allocations     PaymentAllocation[]
+  receipt         Receipt?
+
+  @@unique([establishmentId, receiptNumber])
+  @@index([establishmentId, paidAt])
+}
+
+model PaymentAllocation {
+  id                     String               @id @default(uuid())
+  establishmentId        String
+  paymentId              String
+  studentFeeAssignmentId String
+  amount                 Decimal
+  payment                Payment              @relation(fields: [paymentId], references: [id])
+  studentFeeAssignment   StudentFeeAssignment @relation(fields: [studentFeeAssignmentId], references: [id])
+
+  @@index([establishmentId, paymentId])
+}
+
+model Receipt {
+  id              String   @id @default(uuid())
+  establishmentId String
+  paymentId       String   @unique
+  receiptNumber   String
+  pdfUrl          String?
+  generatedAt     DateTime @default(now())
+  payment         Payment  @relation(fields: [paymentId], references: [id])
+}
+
+model ImportJob {
+  id              String        @id @default(uuid())
+  establishmentId String
+  type            String
+  fileName        String
+  status          String        @default("pending")
+  mapping         Json?
+  totalRows       Int           @default(0)
+  validRows       Int           @default(0)
+  errorRows       Int           @default(0)
+  startedBy       String?
+  startedAt       DateTime      @default(now())
+  completedAt     DateTime?
+  errors          ImportError[]
+
+  @@index([establishmentId, status])
+}
+
+model ImportError {
+  id              String    @id @default(uuid())
+  establishmentId String
+  importJobId     String
+  rowNumber       Int
+  field           String?
+  message         String
+  rawValue        String?
+  importJob       ImportJob @relation(fields: [importJobId], references: [id])
+}
+
+model BackupJob {
+  id              String        @id @default(uuid())
+  establishmentId String
+  type            String
+  status          BackupStatus  @default(PENDING)
+  localPath       String?
+  cloudPath       String?
+  sizeBytes       BigInt?
+  checksum        String?
+  encrypted       Boolean       @default(true)
+  startedAt       DateTime      @default(now())
+  completedAt     DateTime?
+  errorMessage    String?
+  establishment   Establishment @relation(fields: [establishmentId], references: [id])
+
+  @@index([establishmentId, startedAt])
+}
+
+model AuditLog {
+  id              String         @id @default(uuid())
+  establishmentId String?
+  userId          String?
+  action          String
+  entityType      String
+  entityId        String?
+  oldValues       Json?
+  newValues       Json?
+  ipAddress       String?
+  userAgent       String?
+  reason          String?
+  createdAt       DateTime       @default(now())
+  establishment   Establishment? @relation(fields: [establishmentId], references: [id])
+  user            User?          @relation(fields: [userId], references: [id])
+
+  @@index([establishmentId, createdAt])
+}
