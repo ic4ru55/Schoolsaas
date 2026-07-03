@@ -78,7 +78,21 @@ select {
 
 .nav-section {
   display: grid;
-  gap: 8px;
+  gap: 18px;
+}
+
+.nav-group {
+  display: grid;
+  gap: 6px;
+}
+
+.nav-group-label {
+  color: #8fa396;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  padding: 0 12px;
 }
 
 .nav-button {
@@ -105,7 +119,9 @@ select {
 .nav-submenu {
   display: grid;
   gap: 4px;
-  margin: 4px 0 8px 32px;
+  margin: 4px 0 6px 32px;
+  border-left: 1px solid #33473a;
+  padding-left: 8px;
 }
 
 .nav-submenu button {
@@ -897,6 +913,7 @@ select {
 
   .nav-section {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
   }
 
   .dashboard-grid {
@@ -951,6 +968,10 @@ select {
   .setup-form,
   .student-list-tools,
   .nav-section {
+    grid-template-columns: 1fr;
+  }
+
+  .nav-group {
     grid-template-columns: 1fr;
   }
 

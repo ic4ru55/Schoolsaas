@@ -101,24 +101,44 @@ function fileToBase64(file: File) {
   });
 }
 
-const navItems = [
-  { label: "Tableau de bord", icon: LayoutDashboard, view: "dashboard" },
-  { label: "Parametrage", icon: Settings, view: "settings" },
-  { label: "Eleves", icon: GraduationCap, view: "students" },
-  { label: "Documents", icon: FileText, view: "documents" },
-  { label: "Classes", icon: LibraryBig, view: "structure" },
-  { label: "Paiements", icon: Banknote, view: "payments" },
-  { label: "Notes", icon: BookOpen, view: "grades" },
-  { label: "Imports", icon: FileSpreadsheet, view: "imports" },
-  { label: "Sauvegardes", icon: CloudUpload, view: "backups" },
-  { label: "Roles", icon: ShieldCheck, view: "roles" }
-] as const;
-
 const structureTabs = [
   { label: "Niveaux", value: "levels" },
   { label: "Matieres", value: "subjects" },
   { label: "Classes", value: "classes" },
   { label: "Coefficients", value: "coefficients" }
+] as const;
+
+const navGroups = [
+  {
+    label: "Pilotage",
+    items: [
+      { label: "Tableau de bord", icon: LayoutDashboard, view: "dashboard" },
+      { label: "Parametrage", icon: Settings, view: "settings" }
+    ]
+  },
+  {
+    label: "Scolarite",
+    items: [
+      { label: "Eleves", icon: GraduationCap, view: "students" },
+      { label: "Documents", icon: FileText, view: "documents" },
+      { label: "Classes", icon: LibraryBig, view: "structure", submenu: structureTabs }
+    ]
+  },
+  {
+    label: "Gestion",
+    items: [
+      { label: "Paiements", icon: Banknote, view: "payments" },
+      { label: "Notes", icon: BookOpen, view: "grades" },
+      { label: "Imports", icon: FileSpreadsheet, view: "imports" }
+    ]
+  },
+  {
+    label: "Administration",
+    items: [
+      { label: "Sauvegardes", icon: CloudUpload, view: "backups" },
+      { label: "Roles", icon: ShieldCheck, view: "roles" }
+    ]
+  }
 ] as const;
 
 const documentTypes = [
@@ -1019,36 +1039,41 @@ export function SchoolDashboard() {
         </div>
 
         <nav className="nav-section" aria-label="Navigation principale">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <div key={item.label}>
-                <button
-                  className={`nav-button ${activeView === item.view ? "active" : ""}`}
-                  title={item.label}
-                  type="button"
-                  onClick={() => setActiveView(item.view)}
-                >
-                  <Icon size={18} />
-                  <span>{item.label}</span>
-                </button>
-                {item.view === "structure" && activeView === "structure" ? (
-                  <div className="nav-submenu">
-                    {structureTabs.map((tab) => (
-                      <button
-                        className={structureTab === tab.value ? "active" : ""}
-                        key={tab.value}
-                        type="button"
-                        onClick={() => setStructureTab(tab.value)}
-                      >
-                        {tab.label}
-                      </button>
-                    ))}
+          {navGroups.map((group) => (
+            <div className="nav-group" key={group.label}>
+              <span className="nav-group-label">{group.label}</span>
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <div key={item.label}>
+                    <button
+                      className={`nav-button ${activeView === item.view ? "active" : ""}`}
+                      title={item.label}
+                      type="button"
+                      onClick={() => setActiveView(item.view)}
+                    >
+                      <Icon size={18} />
+                      <span>{item.label}</span>
+                    </button>
+                    {"submenu" in item && item.submenu && activeView === item.view ? (
+                      <div className="nav-submenu">
+                        {item.submenu.map((tab) => (
+                          <button
+                            className={structureTab === tab.value ? "active" : ""}
+                            key={tab.value}
+                            type="button"
+                            onClick={() => setStructureTab(tab.value)}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
-                ) : null}
-              </div>
-            );
-          })}
+                );
+              })}
+            </div>
+          ))}
         </nav>
       </aside>
 
@@ -2484,20 +2509,25 @@ function DashboardLoadingShell() {
           </div>
         </div>
         <nav className="nav-section" aria-label="Navigation principale">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                className={`nav-button ${item.view === "dashboard" ? "active" : ""}`}
-                key={item.label}
-                title={item.label}
-                type="button"
-              >
-                <Icon size={18} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
+          {navGroups.map((group) => (
+            <div className="nav-group" key={group.label}>
+              <span className="nav-group-label">{group.label}</span>
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    className={`nav-button ${item.view === "dashboard" ? "active" : ""}`}
+                    key={item.label}
+                    title={item.label}
+                    type="button"
+                  >
+                    <Icon size={18} />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </nav>
       </aside>
       <section className="content">
