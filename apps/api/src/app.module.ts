@@ -7,6 +7,7 @@ import { DashboardModule } from "./modules/dashboard/dashboard.module";
 import { EstablishmentsModule } from "./modules/establishments/establishments.module";
 import { HealthModule } from "./modules/health/health.module";
 import { LevelsModule } from "./modules/levels/levels.module";
+import { PaymentsModule } from "./modules/payments/payments.module";
 import { PrismaModule } from "./modules/prisma/prisma.module";
 import { StudentsModule } from "./modules/students/students.module";
 import { SubjectsModule } from "./modules/subjects/subjects.module";
@@ -22,7 +23,8 @@ import { SubjectsModule } from "./modules/subjects/subjects.module";
     LevelsModule,
     ClassesModule,
     SubjectsModule,
-    StudentsModule
+    StudentsModule,
+    PaymentsModule
   ],
   controllers: [AppController]
 })

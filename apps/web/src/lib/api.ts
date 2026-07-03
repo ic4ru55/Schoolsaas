@@ -8,6 +8,8 @@ export type Establishment = {
   country: string;
   phone?: string | null;
   email?: string | null;
+  logoUrl?: string | null;
+  stampUrl?: string | null;
   motto?: string | null;
   currency: string;
   activeAcademicYearId?: string | null;
@@ -123,6 +125,86 @@ export type DashboardSummary = {
   };
   backup: { status: string; startedAt: string; completedAt?: string | null } | null;
   alerts: string[];
+};
+
+export type FeeItem = {
+  id: string;
+  establishmentId: string;
+  academicYearId: string;
+  levelId?: string | null;
+  classId?: string | null;
+  name: string;
+  amount: number;
+  dueDate?: string | null;
+  required: boolean;
+  assignmentsCount: number;
+  level?: Level | null;
+  class?: SchoolClass | null;
+};
+
+export type StudentPaymentSummary = {
+  id: string;
+  matricule: string;
+  firstName: string;
+  lastName: string;
+  status: string;
+  className?: string | null;
+  classId?: string | null;
+  guardianPhone?: string | null;
+  totalDue: number;
+  paid: number;
+  balance: number;
+  assignments: Array<{
+    id: string;
+    feeItemId: string;
+    feeName: string;
+    amountDue: number;
+    paid: number;
+    balance: number;
+    dueDate?: string | null;
+  }>;
+};
+
+export type PaymentRecord = {
+  id: string;
+  establishmentId: string;
+  studentId: string;
+  academicYearId: string;
+  amount: number;
+  method: "CASH" | "BANK_TRANSFER" | "MOBILE_MONEY" | "CHECK" | "OTHER";
+  reference?: string | null;
+  receiptNumber: string;
+  paidAt: string;
+  receivedBy?: string | null;
+  student?: Student;
+  academicYear?: AcademicYear;
+  receipt?: {
+    id: string;
+    receiptNumber: string;
+    generatedAt: string;
+  } | null;
+  allocations?: Array<{
+    id: string;
+    amount: number;
+    studentFeeAssignment?: {
+      id: string;
+      amountDue: number;
+      feeItem?: FeeItem;
+    };
+  }>;
+};
+
+export type PaymentsOverview = {
+  establishment: Establishment;
+  academicYear: AcademicYear;
+  feeItems: FeeItem[];
+  students: StudentPaymentSummary[];
+  recentPayments: PaymentRecord[];
+  totals: {
+    expected: number;
+    paid: number;
+    balance: number;
+  };
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
@@ -407,4 +489,62 @@ export function deleteStudentDocument(
       method: "DELETE"
     }
   );
+}
+
+export function getPaymentsOverview(establishmentId: string, academicYearId?: string) {
+  const query = academicYearId ? `?academicYearId=${encodeURIComponent(academicYearId)}` : "";
+  return request<PaymentsOverview>(`/establishments/${establishmentId}/payments/overview${query}`);
+}
+
+export function createFeeItem(
+  establishmentId: string,
+  input: {
+    academicYearId: string;
+    name: string;
+    amount: number;
+    dueDate?: string;
+    levelId?: string;
+    classId?: string;
+    required?: boolean;
+  }
+) {
+  return request<FeeItem>(`/establishments/${establishmentId}/payments/fee-items`, {
+    method: "POST",
+    body: JSON.stringify(stripEmptyStrings(input))
+  });
+}
+
+export function assignFeeItem(
+  establishmentId: string,
+  feeItemId: string,
+  input: {
+    target: "ALL_ACTIVE" | "CLASS" | "STUDENT";
+    classId?: string;
+    studentId?: string;
+  }
+) {
+  return request<{ assigned: number; skipped: number }>(
+    `/establishments/${establishmentId}/payments/fee-items/${feeItemId}/assign`,
+    {
+      method: "POST",
+      body: JSON.stringify(stripEmptyStrings(input))
+    }
+  );
+}
+
+export function collectPayment(
+  establishmentId: string,
+  input: {
+    studentId: string;
+    academicYearId: string;
+    amount: number;
+    method: "CASH" | "BANK_TRANSFER" | "MOBILE_MONEY" | "CHECK" | "OTHER";
+    reference?: string;
+    receivedBy?: string;
+  }
+) {
+  return request<PaymentRecord>(`/establishments/${establishmentId}/payments/collect`, {
+    method: "POST",
+    body: JSON.stringify(stripEmptyStrings(input))
+  });
 }

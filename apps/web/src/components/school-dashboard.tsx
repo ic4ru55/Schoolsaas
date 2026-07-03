@@ -31,9 +31,12 @@ import {
   AcademicYear,
   activateAcademicYear,
   assignSubjectToClass,
+  assignFeeItem,
+  collectPayment,
   createClass,
   createAcademicYear,
   createEstablishment,
+  createFeeItem,
   createLevel,
   createStudent,
   createSubject,
@@ -43,6 +46,7 @@ import {
   getDashboard,
   getEstablishments,
   getLevels,
+  getPaymentsOverview,
   getStudentDocuments,
   getStudents,
   getSubjects,
@@ -52,6 +56,8 @@ import {
   StudentDocument,
   studentDocumentFileUrl,
   Subject,
+  PaymentRecord,
+  PaymentsOverview,
   uploadStudentDocument,
   updateEstablishment
 } from "../lib/api";
@@ -69,6 +75,7 @@ type AppView =
   | "roles";
 
 type StructureTab = "levels" | "subjects" | "classes" | "coefficients";
+type PaymentTab = "fees" | "collect" | "receipts";
 
 type GuardianForm = {
   relationship: string;
@@ -108,6 +115,12 @@ const structureTabs = [
   { label: "Coefficients", value: "coefficients" }
 ] as const;
 
+const paymentTabs = [
+  { label: "Frais", value: "fees" },
+  { label: "Encaissement", value: "collect" },
+  { label: "Recus", value: "receipts" }
+] as const;
+
 const navGroups = [
   {
     label: "Pilotage",
@@ -127,7 +140,7 @@ const navGroups = [
   {
     label: "Gestion",
     items: [
-      { label: "Paiements", icon: Banknote, view: "payments" },
+      { label: "Paiements", icon: Banknote, view: "payments", submenu: paymentTabs },
       { label: "Notes", icon: BookOpen, view: "grades" },
       { label: "Imports", icon: FileSpreadsheet, view: "imports" }
     ]
@@ -196,6 +209,21 @@ function formatFileSize(size: number) {
   return `${(size / (1024 * 1024)).toFixed(1)} Mo`;
 }
 
+function formatMoney(amount: number, currency = "XOF") {
+  return `${Math.round(amount).toLocaleString("fr-FR")} ${currency}`;
+}
+
+function paymentMethodLabel(value: string) {
+  const labels: Record<string, string> = {
+    CASH: "Especes",
+    MOBILE_MONEY: "Mobile money",
+    BANK_TRANSFER: "Virement",
+    CHECK: "Cheque",
+    OTHER: "Autre"
+  };
+  return labels[value] ?? value;
+}
+
 function documentDisplayName(document: StudentDocument) {
   return document.label || document.originalName;
 }
@@ -237,6 +265,7 @@ export function SchoolDashboard() {
   const [mounted, setMounted] = useState(false);
   const [activeView, setActiveView] = useState<AppView>("dashboard");
   const [structureTab, setStructureTab] = useState<StructureTab>("levels");
+  const [paymentTab, setPaymentTab] = useState<PaymentTab>("fees");
   const [establishments, setEstablishments] = useState<Establishment[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [metrics, setMetrics] = useState(defaultMetrics);
@@ -249,6 +278,10 @@ export function SchoolDashboard() {
   const [studentSaving, setStudentSaving] = useState(false);
   const [documentSaving, setDocumentSaving] = useState(false);
   const [documentActionId, setDocumentActionId] = useState("");
+  const [paymentSaving, setPaymentSaving] = useState(false);
+  const [paymentOverview, setPaymentOverview] = useState<PaymentsOverview | null>(null);
+  const [selectedPaymentStudentId, setSelectedPaymentStudentId] = useState("");
+  const [lastReceipt, setLastReceipt] = useState<PaymentRecord | null>(null);
   const [levels, setLevels] = useState<Level[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [classes, setClasses] = useState<SchoolClass[]>([]);
@@ -328,6 +361,18 @@ export function SchoolDashboard() {
     label: "",
     file: null
   });
+  const [feeForm, setFeeForm] = useState({
+    name: "",
+    amount: "",
+    dueDate: "",
+    classId: ""
+  });
+  const [paymentForm, setPaymentForm] = useState({
+    amount: "",
+    method: "CASH" as "CASH" | "BANK_TRANSFER" | "MOBILE_MONEY" | "CHECK" | "OTHER",
+    reference: "",
+    receivedBy: ""
+  });
 
   const selected = useMemo(
     () => establishments.find((item) => item.id === selectedId) ?? null,
@@ -350,6 +395,10 @@ export function SchoolDashboard() {
   const selectedDocumentStudent = useMemo(
     () => students.find((student) => student.id === selectedDocumentStudentId) ?? null,
     [selectedDocumentStudentId, students]
+  );
+  const selectedPaymentStudent = useMemo(
+    () => paymentOverview?.students.find((student) => student.id === selectedPaymentStudentId) ?? null,
+    [paymentOverview, selectedPaymentStudentId]
   );
   const filteredStudents = useMemo(() => {
     const search = studentSearch.trim().toLowerCase();
@@ -440,6 +489,7 @@ export function SchoolDashboard() {
     void loadDashboard(selectedId);
     void loadStructure(selectedId);
     void loadStudents(selectedId);
+    void loadPayments(selectedId);
   }, [selectedId]);
 
   useEffect(() => {
@@ -461,6 +511,22 @@ export function SchoolDashboard() {
 
     void loadStudentDocuments(selected.id, selectedDocumentStudentId);
   }, [selected, selectedDocumentStudentId]);
+
+  useEffect(() => {
+    const paymentStudents = paymentOverview?.students ?? [];
+    if (!paymentStudents.length) {
+      setSelectedPaymentStudentId("");
+      return;
+    }
+
+    setSelectedPaymentStudentId((current) => {
+      if (current && paymentStudents.some((student) => student.id === current)) {
+        return current;
+      }
+
+      return paymentStudents.find((student) => student.balance > 0)?.id ?? paymentStudents[0].id;
+    });
+  }, [paymentOverview]);
 
   useEffect(() => {
     if (!selected) {
@@ -531,6 +597,16 @@ export function SchoolDashboard() {
       setStudents(data);
     } catch {
       setAlerts(["Impossible de charger les eleves. Verifier l'API."]);
+    }
+  }
+
+  async function loadPayments(establishmentId: string) {
+    try {
+      const data = await getPaymentsOverview(establishmentId);
+      setPaymentOverview(data);
+    } catch {
+      setPaymentOverview(null);
+      setAlerts(["Impossible de charger les paiements. Verifier l'API."]);
     }
   }
 
@@ -1023,6 +1099,209 @@ export function SchoolDashboard() {
     }
   }
 
+  async function handleCreateFeeItem(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!selected || !paymentOverview) {
+      setAlerts(["Creer ou selectionner un etablissement avant d'ajouter des frais."]);
+      return;
+    }
+
+    const amount = Number(feeForm.amount);
+    if (!Number.isInteger(amount) || amount <= 0) {
+      setAlerts(["Le montant du frais doit etre un nombre entier positif."]);
+      return;
+    }
+
+    setPaymentSaving(true);
+    try {
+      await createFeeItem(selected.id, {
+        academicYearId: paymentOverview.academicYear.id,
+        name: feeForm.name,
+        amount,
+        dueDate: feeForm.dueDate,
+        classId: feeForm.classId
+      });
+      setFeeForm({ name: "", amount: "", dueDate: "", classId: "" });
+      await loadPayments(selected.id);
+      setAlerts(["Frais cree. Il reste a l'affecter aux eleves concernes."]);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Creation du frais impossible.")]);
+    } finally {
+      setPaymentSaving(false);
+    }
+  }
+
+  async function handleAssignFeeItem(feeItemId: string, classId?: string | null) {
+    if (!selected) {
+      setAlerts(["Selectionner un etablissement avant d'affecter un frais."]);
+      return;
+    }
+
+    setPaymentSaving(true);
+    try {
+      const result = await assignFeeItem(selected.id, feeItemId, {
+        target: classId ? "CLASS" : "ALL_ACTIVE",
+        classId: classId ?? undefined
+      });
+      await loadPayments(selected.id);
+      setAlerts([
+        `Frais affecte : ${result.assigned} nouveau(x), ${result.skipped} deja existant(s).`
+      ]);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Affectation du frais impossible.")]);
+    } finally {
+      setPaymentSaving(false);
+    }
+  }
+
+  async function handleCollectPayment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!selected || !paymentOverview || !selectedPaymentStudent) {
+      setAlerts(["Selectionner un eleve avant d'encaisser un paiement."]);
+      return;
+    }
+
+    const amount = Number(paymentForm.amount);
+    if (!Number.isInteger(amount) || amount <= 0) {
+      setAlerts(["Le montant encaisse doit etre un nombre entier positif."]);
+      return;
+    }
+
+    if (amount > selectedPaymentStudent.balance) {
+      setAlerts([
+        `Montant refuse : le reste a payer est de ${formatMoney(
+          selectedPaymentStudent.balance,
+          selected.currency
+        )}.`
+      ]);
+      return;
+    }
+
+    setPaymentSaving(true);
+    try {
+      const payment = await collectPayment(selected.id, {
+        studentId: selectedPaymentStudent.id,
+        academicYearId: paymentOverview.academicYear.id,
+        amount,
+        method: paymentForm.method,
+        reference: paymentForm.reference,
+        receivedBy: paymentForm.receivedBy
+      });
+      setLastReceipt(payment);
+      setPaymentForm({ ...paymentForm, amount: "", reference: "" });
+      await loadPayments(selected.id);
+      await loadDashboard(selected.id);
+      setAlerts(["Paiement enregistre. Le recu est pret a imprimer."]);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Encaissement impossible.")]);
+    } finally {
+      setPaymentSaving(false);
+    }
+  }
+
+  function printPaymentReceipt(payment: PaymentRecord) {
+    const establishment = paymentOverview?.establishment ?? selected;
+    if (!establishment) {
+      setAlerts(["Impossible d'imprimer le recu sans etablissement selectionne."]);
+      return;
+    }
+
+    const printWindow = window.open("", "_blank", "width=900,height=800");
+    if (!printWindow) {
+      setAlerts(["Fenetre d'impression bloquee. Autoriser les popups pour imprimer."]);
+      return;
+    }
+
+    const studentName = `${payment.student?.lastName ?? ""} ${payment.student?.firstName ?? ""}`.trim();
+    const logoMarkup = establishment.logoUrl
+      ? `<img class="logo" src="${escapeHtml(establishment.logoUrl)}" alt="${escapeHtml(
+          establishment.name
+        )}" />`
+      : `<div class="logo-fallback">${escapeHtml(establishment.name.slice(0, 2).toUpperCase())}</div>`;
+    const allocationRows =
+      payment.allocations
+        ?.map(
+          (allocation) => `<tr>
+            <td>${escapeHtml(allocation.studentFeeAssignment?.feeItem?.name ?? "Frais scolaire")}</td>
+            <td>${formatMoney(allocation.amount, establishment.currency)}</td>
+          </tr>`
+        )
+        .join("") || "";
+
+    printWindow.document.write(`<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(payment.receiptNumber)}</title>
+  <style>
+    body { margin: 0; padding: 32px; font-family: Arial, sans-serif; color: #111827; }
+    .receipt { max-width: 760px; margin: 0 auto; border: 1px solid #d1d5db; padding: 24px; }
+    header { display: flex; align-items: center; gap: 16px; border-bottom: 2px solid #166534; padding-bottom: 16px; }
+    .logo { width: 70px; height: 70px; object-fit: contain; }
+    .logo-fallback { display: grid; width: 70px; height: 70px; place-items: center; background: #e8b923; font-weight: 800; }
+    h1, h2, p { margin: 0; }
+    h1 { font-size: 22px; }
+    h2 { margin-top: 22px; font-size: 18px; text-align: center; text-transform: uppercase; }
+    .muted { color: #6b7280; font-size: 13px; margin-top: 4px; }
+    .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 22px 0; }
+    .box { border: 1px solid #e5e7eb; padding: 10px; }
+    .box span { display: block; color: #6b7280; font-size: 12px; }
+    .box strong { display: block; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+    th, td { border: 1px solid #e5e7eb; padding: 10px; text-align: left; }
+    th { background: #f3f4f6; }
+    .total { text-align: right; margin-top: 16px; font-size: 18px; font-weight: 800; }
+    footer { display: flex; justify-content: space-between; margin-top: 44px; font-size: 13px; }
+    @media print { body { padding: 0; } .receipt { border: 0; } }
+  </style>
+</head>
+<body>
+  <div class="receipt">
+    <header>
+      ${logoMarkup}
+      <div>
+        <h1>${escapeHtml(establishment.name)}</h1>
+        <p class="muted">${escapeHtml(establishment.city ?? "")} - ${escapeHtml(
+          establishment.country
+        )}</p>
+        <p class="muted">${escapeHtml(establishment.phone ?? "")} ${escapeHtml(
+          establishment.email ?? ""
+        )}</p>
+      </div>
+    </header>
+    <h2>Recu de paiement</h2>
+    <div class="meta">
+      <div class="box"><span>Numero</span><strong>${escapeHtml(payment.receiptNumber)}</strong></div>
+      <div class="box"><span>Date</span><strong>${new Date(payment.paidAt).toLocaleString(
+        "fr-FR"
+      )}</strong></div>
+      <div class="box"><span>Eleve</span><strong>${escapeHtml(studentName)}</strong></div>
+      <div class="box"><span>Matricule</span><strong>${escapeHtml(
+        payment.student?.matricule ?? ""
+      )}</strong></div>
+      <div class="box"><span>Methode</span><strong>${escapeHtml(
+        paymentMethodLabel(payment.method)
+      )}</strong></div>
+      <div class="box"><span>Reference</span><strong>${escapeHtml(payment.reference ?? "-")}</strong></div>
+    </div>
+    <table>
+      <thead><tr><th>Frais regle</th><th>Montant</th></tr></thead>
+      <tbody>${allocationRows}</tbody>
+    </table>
+    <div class="total">Total encaisse : ${formatMoney(payment.amount, establishment.currency)}</div>
+    <footer>
+      <span>Caissier : ${escapeHtml(payment.receivedBy ?? "-")}</span>
+      <span>Signature</span>
+    </footer>
+  </div>
+  <script>window.addEventListener("load", function(){ setTimeout(function(){ window.print(); }, 300); });</script>
+</body>
+</html>`);
+    printWindow.document.close();
+  }
+
   if (!mounted) {
     return <DashboardLoadingShell />;
   }
@@ -1059,10 +1338,22 @@ export function SchoolDashboard() {
                       <div className="nav-submenu">
                         {item.submenu.map((tab) => (
                           <button
-                            className={structureTab === tab.value ? "active" : ""}
+                            className={
+                              (item.view === "structure" && structureTab === tab.value) ||
+                              (item.view === "payments" && paymentTab === tab.value)
+                                ? "active"
+                                : ""
+                            }
                             key={tab.value}
                             type="button"
-                            onClick={() => setStructureTab(tab.value)}
+                            onClick={() => {
+                              if (item.view === "structure") {
+                                setStructureTab(tab.value as StructureTab);
+                              }
+                              if (item.view === "payments") {
+                                setPaymentTab(tab.value as PaymentTab);
+                              }
+                            }}
                           >
                             {tab.label}
                           </button>
@@ -2238,6 +2529,335 @@ export function SchoolDashboard() {
             </div>
             ) : null}
 
+            {activeView === "payments" ? (
+            <div className="panel">
+              <div className="panel-header">
+                <div>
+                  <h2>Paiements</h2>
+                  <span>{paymentOverview?.academicYear.name ?? activeYear?.name ?? "Annee active requise"}</span>
+                </div>
+                <ReceiptText size={20} />
+              </div>
+
+              {alerts.length ? (
+                <div className="inline-alerts">
+                  {alerts.map((alert) => (
+                    <div className="alert-item" key={alert}>
+                      <AlertTriangle size={18} />
+                      <span>{alert}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {paymentOverview ? (
+                <>
+                  <div className="finance-summary-grid">
+                    <div className="finance-summary-card">
+                      <span>Attendu</span>
+                      <strong>{formatMoney(paymentOverview.totals.expected, paymentOverview.establishment.currency)}</strong>
+                    </div>
+                    <div className="finance-summary-card">
+                      <span>Encaisse</span>
+                      <strong>{formatMoney(paymentOverview.totals.paid, paymentOverview.establishment.currency)}</strong>
+                    </div>
+                    <div className="finance-summary-card">
+                      <span>Reste</span>
+                      <strong>{formatMoney(paymentOverview.totals.balance, paymentOverview.establishment.currency)}</strong>
+                    </div>
+                  </div>
+
+                  {paymentTab === "fees" ? (
+                    <div className="finance-grid">
+                      <form className="settings-block" onSubmit={handleCreateFeeItem}>
+                        <div className="section-title">
+                          <strong>Frais et tranches</strong>
+                          <span>{paymentOverview.feeItems.length} frais cree(s)</span>
+                        </div>
+                        <div className="setup-form">
+                          <label className="field full">
+                            <span className="required">Libelle</span>
+                            <input
+                              required
+                              minLength={2}
+                              placeholder="Exemple : Scolarite - tranche 1"
+                              value={feeForm.name}
+                              onChange={(event) => setFeeForm({ ...feeForm, name: event.target.value })}
+                            />
+                          </label>
+                          <label className="field">
+                            <span className="required">Montant</span>
+                            <input
+                              required
+                              min={1}
+                              step={1}
+                              type="number"
+                              placeholder="Exemple : 25000"
+                              value={feeForm.amount}
+                              onChange={(event) => setFeeForm({ ...feeForm, amount: event.target.value })}
+                            />
+                          </label>
+                          <label className="field">
+                            <span>Echeance</span>
+                            <input
+                              type="date"
+                              value={feeForm.dueDate}
+                              onChange={(event) => setFeeForm({ ...feeForm, dueDate: event.target.value })}
+                            />
+                          </label>
+                          <label className="field full">
+                            <span>Classe concernee</span>
+                            <select
+                              value={feeForm.classId}
+                              onChange={(event) => setFeeForm({ ...feeForm, classId: event.target.value })}
+                            >
+                              <option value="">Toutes les classes actives</option>
+                              {activeClasses.map((schoolClass) => (
+                                <option key={schoolClass.id} value={schoolClass.id}>
+                                  {schoolClass.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <button className="primary-button field full" disabled={paymentSaving} type="submit">
+                            {paymentSaving ? <Loader2 size={17} /> : <Plus size={17} />}
+                            Creer le frais
+                          </button>
+                        </div>
+                      </form>
+
+                      <div className="settings-block">
+                        <div className="section-title">
+                          <strong>Catalogue des frais</strong>
+                          <span>Affectation controlee</span>
+                        </div>
+                        <div className="finance-list">
+                          {paymentOverview.feeItems.length ? (
+                            paymentOverview.feeItems.map((feeItem) => (
+                              <div className="finance-row" key={feeItem.id}>
+                                <div>
+                                  <strong>{feeItem.name}</strong>
+                                  <span>
+                                    {formatMoney(feeItem.amount, paymentOverview.establishment.currency)} -{" "}
+                                    {feeItem.class?.name ?? "Toutes classes"} - {feeItem.assignmentsCount} eleve(s)
+                                  </span>
+                                </div>
+                                <button
+                                  className="ghost-button small"
+                                  disabled={paymentSaving}
+                                  type="button"
+                                  onClick={() => void handleAssignFeeItem(feeItem.id, feeItem.classId)}
+                                >
+                                  Affecter
+                                </button>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="empty-state compact">Aucun frais cree.</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {paymentTab === "collect" ? (
+                    <div className="payment-workspace">
+                      <div className="settings-block">
+                        <div className="section-title">
+                          <strong>Eleves a encaisser</strong>
+                          <span>{paymentOverview.students.length} dossier(s)</span>
+                        </div>
+                        <div className="student-table-wrap payment-student-table">
+                          {paymentOverview.students.length ? (
+                            <table className="student-table clickable">
+                              <thead>
+                                <tr>
+                                  <th>Matricule</th>
+                                  <th>Eleve</th>
+                                  <th>Classe</th>
+                                  <th>Reste</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {paymentOverview.students.map((student) => (
+                                  <tr
+                                    className={selectedPaymentStudentId === student.id ? "selected" : ""}
+                                    key={student.id}
+                                    onClick={() => setSelectedPaymentStudentId(student.id)}
+                                  >
+                                    <td>
+                                      <strong>{student.matricule}</strong>
+                                    </td>
+                                    <td>
+                                      <strong>
+                                        {student.lastName} {student.firstName}
+                                      </strong>
+                                      <span>{student.guardianPhone ?? "Aucun contact"}</span>
+                                    </td>
+                                    <td>{student.className ?? "Aucune classe"}</td>
+                                    <td>{formatMoney(student.balance, paymentOverview.establishment.currency)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          ) : (
+                            <div className="empty-state compact">Aucun eleve actif pour cette annee.</div>
+                          )}
+                        </div>
+                      </div>
+
+                      <form className="settings-block" onSubmit={handleCollectPayment}>
+                        <div className="section-title">
+                          <strong>Encaissement</strong>
+                          <span>{selectedPaymentStudent ? selectedPaymentStudent.matricule : "Selectionner un eleve"}</span>
+                        </div>
+                        {selectedPaymentStudent ? (
+                          <div className="payment-student-card">
+                            <strong>
+                              {selectedPaymentStudent.lastName} {selectedPaymentStudent.firstName}
+                            </strong>
+                            <span>{selectedPaymentStudent.className ?? "Aucune classe"}</span>
+                            <div>
+                              <small>Du : {formatMoney(selectedPaymentStudent.totalDue, paymentOverview.establishment.currency)}</small>
+                              <small>Paye : {formatMoney(selectedPaymentStudent.paid, paymentOverview.establishment.currency)}</small>
+                              <small>Reste : {formatMoney(selectedPaymentStudent.balance, paymentOverview.establishment.currency)}</small>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="empty-state compact">Selectionner un eleve.</div>
+                        )}
+                        <div className="payment-assignment-list">
+                          {selectedPaymentStudent?.assignments.length ? (
+                            selectedPaymentStudent.assignments.map((assignment) => (
+                              <div className="payment-assignment-row" key={assignment.id}>
+                                <span>{assignment.feeName}</span>
+                                <strong>{formatMoney(assignment.balance, paymentOverview.establishment.currency)}</strong>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="empty-state compact">Aucun frais affecte.</div>
+                          )}
+                        </div>
+                        <div className="setup-form">
+                          <label className="field">
+                            <span className="required">Montant encaisse</span>
+                            <input
+                              disabled={!selectedPaymentStudent || paymentSaving}
+                              min={1}
+                              required
+                              step={1}
+                              type="number"
+                              value={paymentForm.amount}
+                              onChange={(event) =>
+                                setPaymentForm({ ...paymentForm, amount: event.target.value })
+                              }
+                            />
+                          </label>
+                          <label className="field">
+                            <span className="required">Methode</span>
+                            <select
+                              disabled={!selectedPaymentStudent || paymentSaving}
+                              value={paymentForm.method}
+                              onChange={(event) =>
+                                setPaymentForm({
+                                  ...paymentForm,
+                                  method: event.target.value as typeof paymentForm.method
+                                })
+                              }
+                            >
+                              <option value="CASH">Especes</option>
+                              <option value="MOBILE_MONEY">Mobile money</option>
+                              <option value="BANK_TRANSFER">Virement</option>
+                              <option value="CHECK">Cheque</option>
+                              <option value="OTHER">Autre</option>
+                            </select>
+                          </label>
+                          <label className="field">
+                            <span>Reference</span>
+                            <input
+                              disabled={!selectedPaymentStudent || paymentSaving}
+                              placeholder="Exemple : transaction mobile"
+                              value={paymentForm.reference}
+                              onChange={(event) =>
+                                setPaymentForm({ ...paymentForm, reference: event.target.value })
+                              }
+                            />
+                          </label>
+                          <label className="field">
+                            <span>Recu par</span>
+                            <input
+                              disabled={!selectedPaymentStudent || paymentSaving}
+                              placeholder="Exemple : Comptable"
+                              value={paymentForm.receivedBy}
+                              onChange={(event) =>
+                                setPaymentForm({ ...paymentForm, receivedBy: event.target.value })
+                              }
+                            />
+                          </label>
+                          <button
+                            className="primary-button field full"
+                            disabled={!selectedPaymentStudent || paymentSaving || !selectedPaymentStudent.balance}
+                            type="submit"
+                          >
+                            {paymentSaving ? <Loader2 size={17} /> : <ReceiptText size={17} />}
+                            Enregistrer le paiement
+                          </button>
+                        </div>
+                        {lastReceipt ? (
+                          <button
+                            className="ghost-button"
+                            type="button"
+                            onClick={() => printPaymentReceipt(lastReceipt)}
+                          >
+                            <Printer size={17} />
+                            Imprimer le dernier recu
+                          </button>
+                        ) : null}
+                      </form>
+                    </div>
+                  ) : null}
+
+                  {paymentTab === "receipts" ? (
+                    <div className="settings-block">
+                      <div className="section-title">
+                        <strong>Recus recents</strong>
+                        <span>{paymentOverview.recentPayments.length} paiement(s)</span>
+                      </div>
+                      <div className="finance-list">
+                        {paymentOverview.recentPayments.length ? (
+                          paymentOverview.recentPayments.map((payment) => (
+                            <div className="finance-row" key={payment.id}>
+                              <div>
+                                <strong>{payment.receiptNumber}</strong>
+                                <span>
+                                  {payment.student?.lastName} {payment.student?.firstName} -{" "}
+                                  {formatMoney(payment.amount, paymentOverview.establishment.currency)} -{" "}
+                                  {new Date(payment.paidAt).toLocaleDateString("fr-FR")}
+                                </span>
+                              </div>
+                              <button
+                                className="ghost-button small"
+                                type="button"
+                                onClick={() => printPaymentReceipt(payment)}
+                              >
+                                <Printer size={15} />
+                                Imprimer
+                              </button>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="empty-state compact">Aucun paiement enregistre.</div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <div className="empty-state">Aucune donnee de paiement chargee.</div>
+              )}
+            </div>
+            ) : null}
+
             {activeView === "dashboard" ? (
             <>
             <div className="panel">
@@ -2350,7 +2970,8 @@ export function SchoolDashboard() {
             activeView !== "settings" &&
             activeView !== "structure" &&
             activeView !== "students" &&
-            activeView !== "documents" ? (
+            activeView !== "documents" &&
+            activeView !== "payments" ? (
               <ComingSoonView view={activeView} />
             ) : null}
           </section>
@@ -2675,13 +3296,12 @@ function MetricCard({
 
 function ComingSoonView({ view }: { view: AppView }) {
   const labels: Record<
-    Exclude<AppView, "dashboard" | "settings" | "structure" | "students" | "documents">,
+    Exclude<
+      AppView,
+      "dashboard" | "settings" | "structure" | "students" | "documents" | "payments"
+    >,
     { title: string; detail: string }
   > = {
-    payments: {
-      title: "Paiements",
-      detail: "Tranches, recus et restes a payer"
-    },
     grades: {
       title: "Notes",
       detail: "Saisies, moyennes et bulletins"
@@ -2701,7 +3321,12 @@ function ComingSoonView({ view }: { view: AppView }) {
   };
 
   const content =
-    labels[view as Exclude<AppView, "dashboard" | "settings" | "structure" | "students" | "documents">];
+    labels[
+      view as Exclude<
+        AppView,
+        "dashboard" | "settings" | "structure" | "students" | "documents" | "payments"
+      >
+    ];
 
   return (
     <div className="panel">

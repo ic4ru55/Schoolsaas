@@ -793,6 +793,95 @@ select {
   opacity: 0.65;
 }
 
+.finance-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.finance-summary-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+  padding: 14px;
+}
+
+.finance-summary-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.finance-summary-card strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 22px;
+}
+
+.finance-grid,
+.payment-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.finance-list,
+.payment-assignment-list {
+  display: grid;
+  gap: 10px;
+}
+
+.finance-row,
+.payment-assignment-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+  padding: 10px 12px;
+}
+
+.finance-row strong,
+.finance-row span,
+.payment-assignment-row span,
+.payment-assignment-row strong {
+  display: block;
+  font-size: 13px;
+}
+
+.finance-row span {
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.payment-student-table {
+  max-height: 560px;
+}
+
+.payment-student-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+  padding: 12px;
+}
+
+.payment-student-card span,
+.payment-student-card small {
+  color: var(--muted);
+}
+
+.payment-student-card div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -939,6 +1028,11 @@ select {
   .document-workspace {
     grid-template-columns: 1fr;
   }
+
+  .finance-grid,
+  .payment-workspace {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 680px) {
@@ -964,6 +1058,9 @@ select {
   .metrics-grid,
   .module-grid,
   .structure-grid,
+  .finance-summary-grid,
+  .finance-row,
+  .payment-assignment-row,
   .document-row,
   .setup-form,
   .student-list-tools,
