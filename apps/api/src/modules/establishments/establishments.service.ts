@@ -1,4 +1,13 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { randomUUID } from "crypto";
+import { createReadStream } from "fs";
+import { mkdir, stat, writeFile } from "fs/promises";
+import { basename, extname, join } from "path";
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  StreamableFile
+} from "@nestjs/common";
 import {
   DEFAULT_ROLES,
   MVP_MODULES,
@@ -8,6 +17,80 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateEstablishmentDto } from "./dto/create-establishment.dto";
 import { UpdateEstablishmentDto } from "./dto/update-establishment.dto";
+import { UploadEstablishmentAssetDto } from "./dto/upload-establishment-asset.dto";
+
+const MAX_ASSET_SIZE_BYTES = 2 * 1024 * 1024;
+const ASSET_EXTENSIONS: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp"
+};
+const ASSET_MIME_BY_EXTENSION: Record<string, string> = Object.fromEntries(
+  Object.entries(ASSET_EXTENSIONS).map(([mimeType, extension]) => [extension, mimeType])
+);
+
+function establishmentInclude() {
+  return {
+    academicYears: { orderBy: { startsAt: "desc" as const } },
+    licenses: { orderBy: { createdAt: "desc" as const }, take: 1 },
+    modules: true
+  };
+}
+
+function safeFileStem(value: string) {
+  const stem = value.replace(extname(value), "");
+  return (
+    stem
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9_-]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 80) || "identite"
+  );
+}
+
+function decodeBase64Image(value: string) {
+  const base64 = value.includes(",") ? value.split(",").pop() ?? "" : value;
+  if (!base64 || base64.length > Math.ceil((MAX_ASSET_SIZE_BYTES * 4) / 3) + 128) {
+    throw new BadRequestException("L'image est vide ou trop volumineuse.");
+  }
+
+  return Buffer.from(base64, "base64");
+}
+
+function bufferMatchesMime(buffer: Buffer, mimeType: string) {
+  if (mimeType === "image/png") {
+    return buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  }
+
+  if (mimeType === "image/jpeg") {
+    return buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  }
+
+  if (mimeType === "image/webp") {
+    return (
+      buffer.length > 12 &&
+      buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
+      buffer.subarray(8, 12).toString("ascii") === "WEBP"
+    );
+  }
+
+  return false;
+}
+
+function assetRouteKey(assetType: string) {
+  const key = assetType.toLowerCase();
+  if (key !== "logo" && key !== "stamp") {
+    throw new BadRequestException("Type d'image inconnu.");
+  }
+
+  return key;
+}
+
+function assetFieldName(assetKey: "logo" | "stamp") {
+  return assetKey === "logo" ? "logoUrl" : "stampUrl";
+}
 
 @Injectable()
 export class EstablishmentsService {
@@ -16,22 +99,14 @@ export class EstablishmentsService {
   findAll() {
     return this.prisma.establishment.findMany({
       orderBy: { createdAt: "desc" },
-      include: {
-        academicYears: { orderBy: { startsAt: "desc" } },
-        licenses: { orderBy: { createdAt: "desc" }, take: 1 },
-        modules: true
-      }
+      include: establishmentInclude()
     });
   }
 
   async findOne(id: string) {
     const establishment = await this.prisma.establishment.findUnique({
       where: { id },
-      include: {
-        academicYears: { orderBy: { startsAt: "desc" } },
-        modules: true,
-        licenses: { orderBy: { createdAt: "desc" }, take: 1 }
-      }
+      include: establishmentInclude()
     });
 
     if (!establishment) {
@@ -116,11 +191,7 @@ export class EstablishmentsService {
 
       return tx.establishment.findUniqueOrThrow({
         where: { id: establishment.id },
-        include: {
-          academicYears: true,
-          licenses: true,
-          modules: true
-        }
+        include: establishmentInclude()
       });
     });
   }
@@ -136,11 +207,89 @@ export class EstablishmentsService {
     return this.prisma.establishment.update({
       where: { id },
       data,
-      include: {
-        academicYears: { orderBy: { startsAt: "desc" } },
-        licenses: { orderBy: { createdAt: "desc" }, take: 1 },
-        modules: true
+      include: establishmentInclude()
+    });
+  }
+
+  async uploadAsset(id: string, dto: UploadEstablishmentAssetDto) {
+    await this.findOne(id);
+
+    const extension = ASSET_EXTENSIONS[dto.mimeType];
+    if (!extension) {
+      throw new BadRequestException("Format image non autorise.");
+    }
+
+    const fileBuffer = decodeBase64Image(dto.base64Content);
+    if (!fileBuffer.length || fileBuffer.length > MAX_ASSET_SIZE_BYTES) {
+      throw new BadRequestException("L'image doit faire au maximum 2 Mo.");
+    }
+
+    if (!bufferMatchesMime(fileBuffer, dto.mimeType)) {
+      throw new BadRequestException("Le contenu du fichier ne correspond pas au format annonce.");
+    }
+
+    const assetKey = dto.assetType === "LOGO" ? "logo" : "stamp";
+    const storageDirectory = join(process.cwd(), "storage", "establishment-assets", id, assetKey);
+    await mkdir(storageDirectory, { recursive: true });
+
+    const fileName = `${Date.now()}-${randomUUID()}-${safeFileStem(dto.originalName)}${extension}`;
+    await writeFile(join(storageDirectory, fileName), fileBuffer);
+
+    const publicPath = `/establishments/${id}/assets/${assetKey}/${fileName}`;
+    const data = assetKey === "logo" ? { logoUrl: publicPath } : { stampUrl: publicPath };
+
+    return this.prisma.establishment.update({
+      where: { id },
+      data,
+      include: establishmentInclude()
+    });
+  }
+
+  async getAssetFile(id: string, assetType: string, fileName: string) {
+    const assetKey = assetRouteKey(assetType);
+    const normalizedFileName = basename(fileName);
+    if (normalizedFileName !== fileName || fileName.includes("..")) {
+      throw new BadRequestException("Nom de fichier invalide.");
+    }
+
+    const fieldName = assetFieldName(assetKey);
+    const establishment = await this.prisma.establishment.findUnique({
+      where: { id },
+      select: {
+        logoUrl: true,
+        stampUrl: true
       }
+    });
+
+    if (!establishment) {
+      throw new NotFoundException("Etablissement introuvable.");
+    }
+
+    const currentUrl = establishment[fieldName];
+    if (!currentUrl || !currentUrl.endsWith(`/${fileName}`)) {
+      throw new NotFoundException("Image introuvable pour cet etablissement.");
+    }
+
+    const absolutePath = join(
+      process.cwd(),
+      "storage",
+      "establishment-assets",
+      id,
+      assetKey,
+      fileName
+    );
+    let fileStats: Awaited<ReturnType<typeof stat>>;
+    try {
+      fileStats = await stat(absolutePath);
+    } catch {
+      throw new NotFoundException("Fichier introuvable sur le disque.");
+    }
+
+    const mimeType = ASSET_MIME_BY_EXTENSION[extname(fileName).toLowerCase()] ?? "application/octet-stream";
+    return new StreamableFile(createReadStream(absolutePath), {
+      type: mimeType,
+      disposition: `inline; filename="${fileName}"`,
+      length: fileStats.size
     });
   }
 }

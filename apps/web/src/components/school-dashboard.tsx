@@ -30,6 +30,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   AcademicYear,
   activateAcademicYear,
+  apiFileUrl,
   assignSubjectToClass,
   assignFeeItem,
   collectPayment,
@@ -59,6 +60,7 @@ import {
   Subject,
   PaymentRecord,
   PaymentsOverview,
+  uploadEstablishmentAsset,
   uploadStudentDocument,
   updateFeeItem,
   updateEstablishment
@@ -179,6 +181,23 @@ const documentTypes = [
   { label: "Autre document", value: "OTHER" }
 ];
 
+const establishmentAssets = [
+  {
+    title: "Logo",
+    assetType: "LOGO",
+    field: "logoUrl",
+    detail: "Utilise sur les recus, bulletins et documents officiels."
+  },
+  {
+    title: "Cachet",
+    assetType: "STAMP",
+    field: "stampUrl",
+    detail: "Image scannee du cachet pour les sorties imprimees."
+  }
+] as const;
+
+const allowedIdentityImageTypes = ["image/jpeg", "image/png", "image/webp"];
+
 const moduleCards = [
   ["Scolarite", "Eleves, parents, classes"],
   ["Finance", "Tranches, recus, restes"],
@@ -289,6 +308,7 @@ export function SchoolDashboard() {
   const [online, setOnline] = useState(false);
   const [saving, setSaving] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [assetSaving, setAssetSaving] = useState<"LOGO" | "STAMP" | null>(null);
   const [yearSaving, setYearSaving] = useState(false);
   const [structureSaving, setStructureSaving] = useState(false);
   const [studentSaving, setStudentSaving] = useState(false);
@@ -705,6 +725,45 @@ export function SchoolDashboard() {
     }
   }
 
+  async function handleUploadIdentityAsset(assetType: "LOGO" | "STAMP", file: File) {
+    if (!selected) {
+      setAlerts(["Creer ou selectionner un etablissement avant d'ajouter son identite visuelle."]);
+      return;
+    }
+
+    if (!allowedIdentityImageTypes.includes(file.type)) {
+      setAlerts(["Image refusee : seuls JPG, PNG et WEBP sont acceptes pour le logo et le cachet."]);
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      setAlerts(["Image refusee : la taille maximale est 2 Mo."]);
+      return;
+    }
+
+    setAssetSaving(assetType);
+    try {
+      const base64Content = await fileToBase64(file);
+      const updated = await uploadEstablishmentAsset(selected.id, {
+        assetType,
+        originalName: file.name,
+        mimeType: file.type,
+        base64Content
+      });
+      replaceEstablishment(updated);
+      setOnline(true);
+      setAlerts([
+        assetType === "LOGO"
+          ? "Logo enregistre. Il sera utilise sur les recus, bulletins et documents."
+          : "Cachet enregistre. Il sera disponible pour les impressions officielles."
+      ]);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Enregistrement de l'image impossible.")]);
+    } finally {
+      setAssetSaving(null);
+    }
+  }
+
   async function handleCreateYear(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -759,6 +818,11 @@ export function SchoolDashboard() {
   function replaceEstablishment(updated: Establishment) {
     setEstablishments((items) =>
       items.map((item) => (item.id === updated.id ? updated : item))
+    );
+    setPaymentOverview((current) =>
+      current && current.establishment.id === updated.id
+        ? { ...current, establishment: updated }
+        : current
     );
   }
 
@@ -1322,11 +1386,18 @@ export function SchoolDashboard() {
     }
 
     const studentName = `${payment.student?.lastName ?? ""} ${payment.student?.firstName ?? ""}`.trim();
-    const logoMarkup = establishment.logoUrl
-      ? `<img class="logo" src="${escapeHtml(establishment.logoUrl)}" alt="${escapeHtml(
+    const logoUrl = apiFileUrl(establishment.logoUrl);
+    const stampUrl = apiFileUrl(establishment.stampUrl);
+    const logoMarkup = logoUrl
+      ? `<img class="logo" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(
           establishment.name
         )}" />`
       : `<div class="logo-fallback">${escapeHtml(establishment.name.slice(0, 2).toUpperCase())}</div>`;
+    const stampMarkup = stampUrl
+      ? `<img class="stamp" src="${escapeHtml(stampUrl)}" alt="Cachet ${escapeHtml(
+          establishment.name
+        )}" />`
+      : "";
     const allocationRows =
       payment.allocations
         ?.map(
@@ -1360,7 +1431,10 @@ export function SchoolDashboard() {
     th, td { border: 1px solid #e5e7eb; padding: 10px; text-align: left; }
     th { background: #f3f4f6; }
     .total { text-align: right; margin-top: 16px; font-size: 18px; font-weight: 800; }
-    footer { display: flex; justify-content: space-between; margin-top: 44px; font-size: 13px; }
+    footer { display: flex; justify-content: space-between; gap: 24px; margin-top: 44px; font-size: 13px; }
+    .signature-block { min-width: 180px; text-align: center; }
+    .signature-block span { display: block; margin-bottom: 10px; color: #4b5563; }
+    .stamp { max-width: 120px; max-height: 80px; object-fit: contain; }
     @media print { body { padding: 0; } .receipt { border: 0; } }
   </style>
 </head>
@@ -1400,7 +1474,10 @@ export function SchoolDashboard() {
     <div class="total">Total encaisse : ${formatMoney(payment.amount, establishment.currency)}</div>
     <footer>
       <span>Caissier : ${escapeHtml(payment.receivedBy ?? "-")}</span>
-      <span>Signature</span>
+      <div class="signature-block">
+        <span>Signature et cachet</span>
+        ${stampMarkup}
+      </div>
     </footer>
   </div>
   <script>window.addEventListener("load", function(){ setTimeout(function(){ window.print(); }, 300); });</script>
@@ -1757,92 +1834,117 @@ export function SchoolDashboard() {
                   </div>
                 </form>
 
-                <div className="settings-block">
-                  <div className="section-title">
-                    <strong>Annee scolaire</strong>
-                    <span>Periode active du travail</span>
-                  </div>
-                  <form className="setup-form" onSubmit={handleCreateYear}>
-                    <label className="field full">
-                      <span className="required">Nom</span>
-                      <input
-                        disabled={!selected}
-                        required
-                        placeholder="Exemple : 2026-2027"
-                        value={yearForm.name}
-                        onChange={(event) => setYearForm({ ...yearForm, name: event.target.value })}
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="required">Debut</span>
-                      <input
-                        disabled={!selected}
-                        required
-                        type="date"
-                        value={yearForm.startsAt}
-                        onChange={(event) => setYearForm({ ...yearForm, startsAt: event.target.value })}
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="required">Fin</span>
-                      <input
-                        disabled={!selected}
-                        required
-                        type="date"
-                        value={yearForm.endsAt}
-                        onChange={(event) => setYearForm({ ...yearForm, endsAt: event.target.value })}
-                      />
-                    </label>
-                    <label className="field full">
-                      <span className="required">Statut initial</span>
-                      <select
-                        disabled={!selected}
-                        value={yearForm.status}
-                        onChange={(event) =>
-                          setYearForm({
-                            ...yearForm,
-                            status: event.target.value as "DRAFT" | "ACTIVE"
-                          })
-                        }
-                      >
-                        <option value="ACTIVE">Active</option>
-                        <option value="DRAFT">Brouillon</option>
-                      </select>
-                    </label>
-                    <button className="primary-button field full" disabled={!selected || yearSaving} type="submit">
-                      {yearSaving ? <Loader2 size={17} /> : <Plus size={17} />}
-                      Ajouter l'annee
-                    </button>
-                  </form>
+                <div className="settings-column">
+                  <div className="settings-block">
+                    <div className="section-title">
+                      <strong>Annee scolaire</strong>
+                      <span>Periode active du travail</span>
+                    </div>
+                    <form className="setup-form" onSubmit={handleCreateYear}>
+                      <label className="field full">
+                        <span className="required">Nom</span>
+                        <input
+                          disabled={!selected}
+                          required
+                          placeholder="Exemple : 2026-2027"
+                          value={yearForm.name}
+                          onChange={(event) => setYearForm({ ...yearForm, name: event.target.value })}
+                        />
+                      </label>
+                      <label className="field">
+                        <span className="required">Debut</span>
+                        <input
+                          disabled={!selected}
+                          required
+                          type="date"
+                          value={yearForm.startsAt}
+                          onChange={(event) => setYearForm({ ...yearForm, startsAt: event.target.value })}
+                        />
+                      </label>
+                      <label className="field">
+                        <span className="required">Fin</span>
+                        <input
+                          disabled={!selected}
+                          required
+                          type="date"
+                          value={yearForm.endsAt}
+                          onChange={(event) => setYearForm({ ...yearForm, endsAt: event.target.value })}
+                        />
+                      </label>
+                      <label className="field full">
+                        <span className="required">Statut initial</span>
+                        <select
+                          disabled={!selected}
+                          value={yearForm.status}
+                          onChange={(event) =>
+                            setYearForm({
+                              ...yearForm,
+                              status: event.target.value as "DRAFT" | "ACTIVE"
+                            })
+                          }
+                        >
+                          <option value="ACTIVE">Active</option>
+                          <option value="DRAFT">Brouillon</option>
+                        </select>
+                      </label>
+                      <button className="primary-button field full" disabled={!selected || yearSaving} type="submit">
+                        {yearSaving ? <Loader2 size={17} /> : <Plus size={17} />}
+                        Ajouter l'annee
+                      </button>
+                    </form>
 
-                  <div className="record-list">
-                    {selected?.academicYears?.length ? (
-                      selected.academicYears.map((year) => (
-                        <div className="record-row" key={year.id}>
-                          <div>
-                            <strong>{year.name}</strong>
-                            <span>{formatDate(year.startsAt)} - {formatDate(year.endsAt)}</span>
+                    <div className="record-list">
+                      {selected?.academicYears?.length ? (
+                        selected.academicYears.map((year) => (
+                          <div className="record-row" key={year.id}>
+                            <div>
+                              <strong>{year.name}</strong>
+                              <span>{formatDate(year.startsAt)} - {formatDate(year.endsAt)}</span>
+                            </div>
+                            {year.status === "ACTIVE" ? (
+                              <span className="status-badge active">Active</span>
+                            ) : (
+                              <button
+                                className="ghost-button small"
+                                disabled={yearSaving}
+                                onClick={() => void handleActivateYear(year)}
+                                type="button"
+                              >
+                                <PlayCircle size={15} />
+                                Activer
+                              </button>
+                            )}
                           </div>
-                          {year.status === "ACTIVE" ? (
-                            <span className="status-badge active">Active</span>
-                          ) : (
-                            <button
-                              className="ghost-button small"
-                              disabled={yearSaving}
-                              onClick={() => void handleActivateYear(year)}
-                              type="button"
-                            >
-                              <PlayCircle size={15} />
-                              Activer
-                            </button>
-                          )}
-                        </div>
-                      ))
-                    ) : (
-                      <div className="empty-state">Aucune annee scolaire creee.</div>
-                    )}
+                        ))
+                      ) : (
+                        <div className="empty-state">Aucune annee scolaire creee.</div>
+                      )}
+                    </div>
                   </div>
-                </div>
+
+                  <div className="settings-block">
+                    <div className="section-title">
+                      <strong>Identite visuelle</strong>
+                      <span>Logo et cachet officiels</span>
+                    </div>
+                    <div className="identity-assets">
+                      {establishmentAssets.map((asset) => (
+                        <BrandAssetUploader
+                          assetUrl={selected?.[asset.field] ?? ""}
+                          detail={asset.detail}
+                          disabled={!selected || assetSaving !== null}
+                          key={asset.assetType}
+                          saving={assetSaving === asset.assetType}
+                          title={asset.title}
+                          onUpload={(file) => void handleUploadIdentityAsset(asset.assetType, file)}
+                        />
+                      ))}
+                    </div>
+                    <p className="panel-note">
+                      Formats acceptes : JPG, PNG ou WEBP. Taille maximale : 2 Mo par image.
+                    </p>
+                  </div>
+                        </div>
               </div>
             </div>
             ) : null}
@@ -3589,6 +3691,58 @@ function GuardianFields({
         />
       </label>
     </>
+  );
+}
+
+function BrandAssetUploader({
+  assetUrl,
+  detail,
+  disabled,
+  saving,
+  title,
+  onUpload
+}: {
+  assetUrl?: string | null;
+  detail: string;
+  disabled: boolean;
+  saving: boolean;
+  title: string;
+  onUpload: (file: File) => void;
+}) {
+  const imageUrl = apiFileUrl(assetUrl);
+
+  return (
+    <div className="identity-asset">
+      <div className="asset-preview" aria-hidden="true">
+        {imageUrl ? (
+          <img alt="" src={imageUrl} />
+        ) : (
+          <span>{title.slice(0, 2).toUpperCase()}</span>
+        )}
+      </div>
+      <div className="asset-copy">
+        <strong>{title}</strong>
+        <span>{detail}</span>
+        <small>{imageUrl ? "Image configuree" : "Aucune image configuree"}</small>
+      </div>
+      <label className={`ghost-button asset-upload-button ${disabled || saving ? "disabled" : ""}`}>
+        {saving ? <Loader2 size={16} /> : <CloudUpload size={16} />}
+        {imageUrl ? "Changer" : "Ajouter"}
+        <input
+          accept="image/png,image/jpeg,image/webp"
+          disabled={disabled || saving}
+          type="file"
+          onChange={(event) => {
+            const input = event.currentTarget;
+            const file = input.files?.[0];
+            if (file) {
+              onUpload(file);
+              input.value = "";
+            }
+          }}
+        />
+      </label>
+    </div>
   );
 }
 

@@ -97,6 +97,7 @@ export class PaymentsService {
         phone: true,
         email: true,
         logoUrl: true,
+        stampUrl: true,
         motto: true,
         currency: true,
         activeAcademicYearId: true

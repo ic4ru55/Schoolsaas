@@ -215,6 +215,18 @@ function apiPath(path: string) {
   return `${API_URL}${path}`;
 }
 
+export function apiFileUrl(path?: string | null) {
+  if (!path) {
+    return "";
+  }
+
+  if (/^(https?:|data:|blob:)/i.test(path)) {
+    return path;
+  }
+
+  return apiPath(path.startsWith("/") ? path : `/${path}`);
+}
+
 function stripEmptyStrings<T extends Record<string, unknown>>(input: T) {
   return Object.fromEntries(
     Object.entries(input).filter(([, value]) => value !== "")
@@ -309,6 +321,21 @@ export function updateEstablishment(
   return request<Establishment>(`/establishments/${establishmentId}`, {
     method: "PATCH",
     body: JSON.stringify(stripEmptyStrings(input))
+  });
+}
+
+export function uploadEstablishmentAsset(
+  establishmentId: string,
+  input: {
+    assetType: "LOGO" | "STAMP";
+    originalName: string;
+    mimeType: string;
+    base64Content: string;
+  }
+) {
+  return request<Establishment>(`/establishments/${establishmentId}/assets`, {
+    method: "POST",
+    body: JSON.stringify(input)
   });
 }
 
