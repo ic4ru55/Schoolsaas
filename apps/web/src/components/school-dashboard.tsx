@@ -41,6 +41,7 @@ import {
   createStudent,
   createSubject,
   deleteStudentDocument,
+  deleteFeeItem,
   Establishment,
   getClasses,
   getDashboard,
@@ -59,6 +60,7 @@ import {
   PaymentRecord,
   PaymentsOverview,
   uploadStudentDocument,
+  updateFeeItem,
   updateEstablishment
 } from "../lib/api";
 
@@ -96,6 +98,20 @@ function emptyGuardianForm(relationship = "Pere"): GuardianForm {
     email: "",
     profession: "",
     address: ""
+  };
+}
+
+function emptyClassForm() {
+  return {
+    name: "",
+    code: "",
+    capacity: "",
+    levelId: "",
+    tuitionEnabled: false,
+    tuitionTranches: [
+      { name: "Scolarite - tranche 1", amount: "", dueDate: "" },
+      { name: "Scolarite - tranche 2", amount: "", dueDate: "" }
+    ]
   };
 }
 
@@ -281,6 +297,7 @@ export function SchoolDashboard() {
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [paymentOverview, setPaymentOverview] = useState<PaymentsOverview | null>(null);
   const [selectedPaymentStudentId, setSelectedPaymentStudentId] = useState("");
+  const [editingFeeItemId, setEditingFeeItemId] = useState("");
   const [lastReceipt, setLastReceipt] = useState<PaymentRecord | null>(null);
   const [levels, setLevels] = useState<Level[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -329,12 +346,7 @@ export function SchoolDashboard() {
     code: "",
     subjectGroup: ""
   });
-  const [classForm, setClassForm] = useState({
-    name: "",
-    code: "",
-    capacity: "",
-    levelId: ""
-  });
+  const [classForm, setClassForm] = useState(emptyClassForm);
   const [assignForm, setAssignForm] = useState({
     classId: "",
     subjectId: "",
@@ -362,6 +374,12 @@ export function SchoolDashboard() {
     file: null
   });
   const [feeForm, setFeeForm] = useState({
+    name: "",
+    amount: "",
+    dueDate: "",
+    classId: ""
+  });
+  const [feeEditForm, setFeeEditForm] = useState({
     name: "",
     amount: "",
     dueDate: "",
@@ -791,19 +809,46 @@ export function SchoolDashboard() {
       return;
     }
 
+    const tuitionTranches = classForm.tuitionEnabled
+      ? classForm.tuitionTranches.filter((tranche) => tranche.name.trim() || tranche.amount.trim())
+      : [];
+    for (const tranche of tuitionTranches) {
+      const amount = Number(tranche.amount);
+      if (!tranche.name.trim() || !Number.isInteger(amount) || amount <= 0) {
+        setAlerts(["Chaque tranche de scolarite doit avoir un libelle et un montant entier positif."]);
+        return;
+      }
+    }
+
     setStructureSaving(true);
     try {
-      await createClass(selected.id, {
+      const createdClass = await createClass(selected.id, {
         academicYearId: activeYear.id,
         levelId: classForm.levelId || undefined,
         name: classForm.name,
         code: classForm.code,
         capacity: classForm.capacity ? Number(classForm.capacity) : undefined
       });
-      setClassForm({ name: "", code: "", capacity: "", levelId: "" });
+      if (tuitionTranches.length) {
+        for (const tranche of tuitionTranches) {
+          await createFeeItem(selected.id, {
+            academicYearId: activeYear.id,
+            classId: createdClass.id,
+            name: tranche.name,
+            amount: Number(tranche.amount),
+            dueDate: tranche.dueDate
+          });
+        }
+      }
+      setClassForm(emptyClassForm());
       await loadStructure(selected.id);
+      await loadPayments(selected.id);
       await loadDashboard(selected.id);
-      setAlerts(["Classe ajoutee pour l'annee scolaire active."]);
+      setAlerts([
+        tuitionTranches.length
+          ? "Classe ajoutee avec ses tranches de scolarite. Affecter les frais aux eleves apres inscription."
+          : "Classe ajoutee pour l'annee scolaire active."
+      ]);
     } catch (error) {
       setAlerts([errorMessage(error, "Creation de la classe impossible.")]);
     } finally {
@@ -1150,6 +1195,68 @@ export function SchoolDashboard() {
       ]);
     } catch (error) {
       setAlerts([errorMessage(error, "Affectation du frais impossible.")]);
+    } finally {
+      setPaymentSaving(false);
+    }
+  }
+
+  function startEditFeeItem(feeItem: PaymentsOverview["feeItems"][number]) {
+    setEditingFeeItemId(feeItem.id);
+    setFeeEditForm({
+      name: feeItem.name,
+      amount: String(Math.round(feeItem.amount)),
+      dueDate: feeItem.dueDate ? feeItem.dueDate.slice(0, 10) : "",
+      classId: feeItem.classId ?? ""
+    });
+  }
+
+  async function handleUpdateFeeItem(feeItemId: string) {
+    if (!selected) {
+      setAlerts(["Selectionner un etablissement avant de modifier un frais."]);
+      return;
+    }
+
+    const amount = Number(feeEditForm.amount);
+    if (!feeEditForm.name.trim() || !Number.isInteger(amount) || amount <= 0) {
+      setAlerts(["Le frais doit avoir un libelle et un montant entier positif."]);
+      return;
+    }
+
+    setPaymentSaving(true);
+    try {
+      await updateFeeItem(selected.id, feeItemId, {
+        name: feeEditForm.name,
+        amount,
+        dueDate: feeEditForm.dueDate,
+        classId: feeEditForm.classId
+      });
+      setEditingFeeItemId("");
+      await loadPayments(selected.id);
+      setAlerts(["Frais mis a jour. Les lignes non payees ont ete ajustees."]);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Modification du frais impossible.")]);
+    } finally {
+      setPaymentSaving(false);
+    }
+  }
+
+  async function handleDeleteFeeItem(feeItemId: string) {
+    if (!selected) {
+      setAlerts(["Selectionner un etablissement avant de supprimer un frais."]);
+      return;
+    }
+
+    if (!window.confirm("Supprimer ce frais et ses affectations non payees ?")) {
+      return;
+    }
+
+    setPaymentSaving(true);
+    try {
+      await deleteFeeItem(selected.id, feeItemId);
+      await loadPayments(selected.id);
+      setAlerts(["Frais supprime."]);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Suppression du frais impossible.")]);
     } finally {
       setPaymentSaving(false);
     }
@@ -1923,6 +2030,88 @@ export function SchoolDashboard() {
                         onChange={(event) => setClassForm({ ...classForm, capacity: event.target.value })}
                       />
                     </label>
+                    <label className="field full checkbox-field">
+                      <input
+                        checked={classForm.tuitionEnabled}
+                        disabled={!selected || !activeYear}
+                        type="checkbox"
+                        onChange={(event) =>
+                          setClassForm({ ...classForm, tuitionEnabled: event.target.checked })
+                        }
+                      />
+                      <span>Ajouter la scolarite et les tranches de cette classe maintenant</span>
+                    </label>
+                    {classForm.tuitionEnabled ? (
+                      <div className="class-fee-builder field full">
+                        <div className="section-title compact">
+                          <strong>Scolarite de la classe</strong>
+                          <span>Tranches creees avec la classe</span>
+                        </div>
+                        {classForm.tuitionTranches.map((tranche, index) => (
+                          <div className="class-fee-row" key={index}>
+                            <label className="field">
+                              <span>Libelle</span>
+                              <input
+                                placeholder="Exemple : Scolarite - tranche 1"
+                                value={tranche.name}
+                                onChange={(event) => {
+                                  const next = [...classForm.tuitionTranches];
+                                  next[index] = { ...tranche, name: event.target.value };
+                                  setClassForm({ ...classForm, tuitionTranches: next });
+                                }}
+                              />
+                            </label>
+                            <label className="field">
+                              <span>Montant</span>
+                              <input
+                                min={1}
+                                step={1}
+                                type="number"
+                                placeholder="25000"
+                                value={tranche.amount}
+                                onChange={(event) => {
+                                  const next = [...classForm.tuitionTranches];
+                                  next[index] = { ...tranche, amount: event.target.value };
+                                  setClassForm({ ...classForm, tuitionTranches: next });
+                                }}
+                              />
+                            </label>
+                            <label className="field">
+                              <span>Echeance</span>
+                              <input
+                                type="date"
+                                value={tranche.dueDate}
+                                onChange={(event) => {
+                                  const next = [...classForm.tuitionTranches];
+                                  next[index] = { ...tranche, dueDate: event.target.value };
+                                  setClassForm({ ...classForm, tuitionTranches: next });
+                                }}
+                              />
+                            </label>
+                          </div>
+                        ))}
+                        <button
+                          className="ghost-button small"
+                          type="button"
+                          onClick={() =>
+                            setClassForm({
+                              ...classForm,
+                              tuitionTranches: [
+                                ...classForm.tuitionTranches,
+                                {
+                                  name: `Scolarite - tranche ${classForm.tuitionTranches.length + 1}`,
+                                  amount: "",
+                                  dueDate: ""
+                                }
+                              ]
+                            })
+                          }
+                        >
+                          <Plus size={15} />
+                          Ajouter une tranche
+                        </button>
+                      </div>
+                    ) : null}
                     <button className="primary-button field full" disabled={!selected || !activeYear || structureSaving} type="submit">
                       {structureSaving ? <Loader2 size={17} /> : <Plus size={17} />}
                       Ajouter la classe
@@ -2566,6 +2755,16 @@ export function SchoolDashboard() {
                       <strong>{formatMoney(paymentOverview.totals.balance, paymentOverview.establishment.currency)}</strong>
                     </div>
                   </div>
+                  {paymentOverview.alerts.length ? (
+                    <div className="finance-alert-grid">
+                      {paymentOverview.alerts.map((alert) => (
+                        <div className="finance-alert" key={alert}>
+                          <AlertTriangle size={17} />
+                          <span>{alert}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
 
                   {paymentTab === "fees" ? (
                     <div className="finance-grid">
@@ -2635,21 +2834,119 @@ export function SchoolDashboard() {
                           {paymentOverview.feeItems.length ? (
                             paymentOverview.feeItems.map((feeItem) => (
                               <div className="finance-row" key={feeItem.id}>
-                                <div>
-                                  <strong>{feeItem.name}</strong>
-                                  <span>
-                                    {formatMoney(feeItem.amount, paymentOverview.establishment.currency)} -{" "}
-                                    {feeItem.class?.name ?? "Toutes classes"} - {feeItem.assignmentsCount} eleve(s)
-                                  </span>
-                                </div>
-                                <button
-                                  className="ghost-button small"
-                                  disabled={paymentSaving}
-                                  type="button"
-                                  onClick={() => void handleAssignFeeItem(feeItem.id, feeItem.classId)}
-                                >
-                                  Affecter
-                                </button>
+                                {editingFeeItemId === feeItem.id ? (
+                                  <div className="fee-edit-form">
+                                    <label className="field">
+                                      <span>Libelle</span>
+                                      <input
+                                        value={feeEditForm.name}
+                                        onChange={(event) =>
+                                          setFeeEditForm({ ...feeEditForm, name: event.target.value })
+                                        }
+                                      />
+                                    </label>
+                                    <label className="field">
+                                      <span>Montant</span>
+                                      <input
+                                        min={1}
+                                        step={1}
+                                        type="number"
+                                        value={feeEditForm.amount}
+                                        onChange={(event) =>
+                                          setFeeEditForm({ ...feeEditForm, amount: event.target.value })
+                                        }
+                                      />
+                                    </label>
+                                    <label className="field">
+                                      <span>Echeance</span>
+                                      <input
+                                        type="date"
+                                        value={feeEditForm.dueDate}
+                                        onChange={(event) =>
+                                          setFeeEditForm({ ...feeEditForm, dueDate: event.target.value })
+                                        }
+                                      />
+                                    </label>
+                                    <label className="field">
+                                      <span>Classe</span>
+                                      <select
+                                        value={feeEditForm.classId}
+                                        onChange={(event) =>
+                                          setFeeEditForm({ ...feeEditForm, classId: event.target.value })
+                                        }
+                                      >
+                                        <option value="">Toutes classes</option>
+                                        {activeClasses.map((schoolClass) => (
+                                          <option key={schoolClass.id} value={schoolClass.id}>
+                                            {schoolClass.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <div className="fee-action-row">
+                                      <button
+                                        className="primary-button"
+                                        disabled={paymentSaving}
+                                        type="button"
+                                        onClick={() => void handleUpdateFeeItem(feeItem.id)}
+                                      >
+                                        <Save size={15} />
+                                        Enregistrer
+                                      </button>
+                                      <button
+                                        className="ghost-button"
+                                        type="button"
+                                        onClick={() => setEditingFeeItemId("")}
+                                      >
+                                        Annuler
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div>
+                                      <strong>{feeItem.name}</strong>
+                                      <span>
+                                        {formatMoney(feeItem.amount, paymentOverview.establishment.currency)} -{" "}
+                                        {feeItem.class?.name ?? "Toutes classes"} - {feeItem.assignmentsCount} eleve(s)
+                                      </span>
+                                      <span>
+                                        Paye : {formatMoney(feeItem.paidAmount, paymentOverview.establishment.currency)}
+                                      </span>
+                                    </div>
+                                    <div className="fee-action-row">
+                                      <button
+                                        className="ghost-button small"
+                                        disabled={paymentSaving}
+                                        type="button"
+                                        onClick={() => void handleAssignFeeItem(feeItem.id, feeItem.classId)}
+                                      >
+                                        Affecter
+                                      </button>
+                                      <button
+                                        className="ghost-button small"
+                                        disabled={paymentSaving}
+                                        type="button"
+                                        onClick={() => startEditFeeItem(feeItem)}
+                                      >
+                                        Modifier
+                                      </button>
+                                      <button
+                                        className="ghost-button small danger-button"
+                                        disabled={paymentSaving || feeItem.paidAmount > 0}
+                                        type="button"
+                                        title={
+                                          feeItem.paidAmount > 0
+                                            ? "Suppression impossible : paiement deja encaisse"
+                                            : "Supprimer"
+                                        }
+                                        onClick={() => void handleDeleteFeeItem(feeItem.id)}
+                                      >
+                                        Supprimer
+                                      </button>
+                                    </div>
+                                  </>
+                                )}
                               </div>
                             ))
                           ) : (
@@ -2730,8 +3027,16 @@ export function SchoolDashboard() {
                           {selectedPaymentStudent?.assignments.length ? (
                             selectedPaymentStudent.assignments.map((assignment) => (
                               <div className="payment-assignment-row" key={assignment.id}>
-                                <span>{assignment.feeName}</span>
-                                <strong>{formatMoney(assignment.balance, paymentOverview.establishment.currency)}</strong>
+                                <div>
+                                  <span>{assignment.feeName}</span>
+                                  <small>
+                                    Du : {formatMoney(assignment.amountDue, paymentOverview.establishment.currency)} -{" "}
+                                    Paye : {formatMoney(assignment.paid, paymentOverview.establishment.currency)}
+                                  </small>
+                                </div>
+                                <strong>
+                                  Reste {formatMoney(assignment.balance, paymentOverview.establishment.currency)}
+                                </strong>
                               </div>
                             ))
                           ) : (

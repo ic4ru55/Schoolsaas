@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AssignFeeItemDto } from "./dto/assign-fee-item.dto";
 import { CollectPaymentDto } from "./dto/collect-payment.dto";
 import { CreateFeeItemDto } from "./dto/create-fee-item.dto";
+import { UpdateFeeItemDto } from "./dto/update-fee-item.dto";
 
 function money(value: unknown) {
   if (value === null || value === undefined) {
@@ -52,7 +53,8 @@ function normalizeFeeItem(feeItem: any) {
   return {
     ...feeItem,
     amount: money(feeItem.amount),
-    assignmentsCount: feeItem._count?.assignments ?? feeItem.assignmentsCount ?? 0
+    assignmentsCount: feeItem._count?.assignments ?? feeItem.assignmentsCount ?? 0,
+    paidAmount: feeItem.paidAmount ?? 0
   };
 }
 
@@ -136,6 +138,17 @@ export class PaymentsService {
         include: {
           level: true,
           class: true,
+          assignments: {
+            include: {
+              allocations: {
+                where: {
+                  payment: {
+                    cancelledAt: null
+                  }
+                }
+              }
+            }
+          },
           _count: {
             select: {
               assignments: true
@@ -260,18 +273,69 @@ export class PaymentsService {
 
     const totalExpected = studentSummaries.reduce((total, student) => total + student.totalDue, 0);
     const totalPaid = studentSummaries.reduce((total, student) => total + student.paid, 0);
+    const today = new Date();
+    const soon = new Date(today);
+    soon.setDate(today.getDate() + 7);
+    const studentsWithBalance = studentSummaries.filter((student) => student.balance > 0);
+    const studentsWithoutFees = studentSummaries.filter((student) => !student.assignments.length);
+    const overdueAssignments = studentSummaries.flatMap((student) =>
+      student.assignments
+        .filter(
+          (assignment) =>
+            assignment.balance > 0 &&
+            assignment.dueDate &&
+            new Date(assignment.dueDate).getTime() < today.getTime()
+        )
+        .map((assignment) => ({ student, assignment }))
+    );
+    const upcomingAssignments = studentSummaries.flatMap((student) =>
+      student.assignments
+        .filter((assignment) => {
+          if (!assignment.dueDate || assignment.balance <= 0) {
+            return false;
+          }
+          const dueDate = new Date(assignment.dueDate);
+          return dueDate.getTime() >= today.getTime() && dueDate.getTime() <= soon.getTime();
+        })
+        .map((assignment) => ({ student, assignment }))
+    );
+    const financeAlerts = [
+      ...(studentsWithBalance.length
+        ? [
+            `${studentsWithBalance.length} eleve(s) ont un reste a payer pour ${academicYear.name}.`
+          ]
+        : []),
+      ...(overdueAssignments.length
+        ? [`${overdueAssignments.length} tranche(s) en retard de paiement.`]
+        : []),
+      ...(upcomingAssignments.length
+        ? [`${upcomingAssignments.length} echeance(s) arrivent dans les 7 prochains jours.`]
+        : []),
+      ...(studentsWithoutFees.length
+        ? [`${studentsWithoutFees.length} eleve(s) actifs n'ont aucun frais affecte.`]
+        : [])
+    ];
 
     return {
       establishment,
       academicYear,
-      feeItems: feeItems.map(normalizeFeeItem),
+      feeItems: feeItems.map((feeItem) =>
+        normalizeFeeItem({
+          ...feeItem,
+          paidAmount: feeItem.assignments.reduce(
+            (total, assignment) => total + paidAmount(assignment),
+            0
+          )
+        })
+      ),
       students: studentSummaries,
       recentPayments: recentPayments.map(normalizePayment),
       totals: {
         expected: totalExpected,
         paid: totalPaid,
         balance: Math.max(0, totalExpected - totalPaid)
-      }
+      },
+      alerts: financeAlerts
     };
   }
 
@@ -408,6 +472,153 @@ export class PaymentsService {
       assigned: result.count,
       skipped: students.length - result.count
     };
+  }
+
+  async updateFeeItem(establishmentId: string, feeItemId: string, dto: UpdateFeeItemDto) {
+    const feeItem = await this.prisma.feeItem.findFirst({
+      where: {
+        id: feeItemId,
+        establishmentId
+      },
+      include: {
+        assignments: {
+          include: {
+            allocations: {
+              where: {
+                payment: {
+                  cancelledAt: null
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!feeItem) {
+      throw new NotFoundException("Frais introuvable.");
+    }
+
+    const paid = feeItem.assignments.reduce(
+      (total, assignment) => total + paidAmount(assignment),
+      0
+    );
+    if (paid > 0 && dto.amount !== undefined && dto.amount < paid) {
+      throw new BadRequestException(
+        `Montant refuse : ${paid} est deja encaisse sur ce frais.`
+      );
+    }
+
+    if (dto.classId) {
+      const schoolClass = await this.prisma.schoolClass.findFirst({
+        where: {
+          id: dto.classId,
+          establishmentId,
+          academicYearId: feeItem.academicYearId
+        }
+      });
+
+      if (!schoolClass) {
+        throw new BadRequestException("La classe indiquee est introuvable pour cette annee.");
+      }
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.feeItem.update({
+        where: {
+          id: feeItem.id
+        },
+        data: {
+          name: dto.name?.trim(),
+          amount: dto.amount,
+          dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
+          classId: dto.classId,
+          required: dto.required
+        },
+        include: {
+          level: true,
+          class: true,
+          _count: {
+            select: {
+              assignments: true
+            }
+          }
+        }
+      });
+
+      if (dto.amount !== undefined) {
+        const assignmentIds = feeItem.assignments
+          .filter((assignment) => paidAmount(assignment) === 0)
+          .map((assignment) => assignment.id);
+
+        if (assignmentIds.length) {
+          await tx.studentFeeAssignment.updateMany({
+            where: {
+              id: {
+                in: assignmentIds
+              }
+            },
+            data: {
+              amountDue: dto.amount
+            }
+          });
+        }
+      }
+
+      return normalizeFeeItem({ ...updated, paidAmount: paid });
+    });
+  }
+
+  async deleteFeeItem(establishmentId: string, feeItemId: string) {
+    const feeItem = await this.prisma.feeItem.findFirst({
+      where: {
+        id: feeItemId,
+        establishmentId
+      },
+      include: {
+        assignments: {
+          include: {
+            allocations: {
+              where: {
+                payment: {
+                  cancelledAt: null
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!feeItem) {
+      throw new NotFoundException("Frais introuvable.");
+    }
+
+    const paid = feeItem.assignments.reduce(
+      (total, assignment) => total + paidAmount(assignment),
+      0
+    );
+
+    if (paid > 0) {
+      throw new BadRequestException(
+        "Suppression refusee : ce frais a deja des paiements encaisses."
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.studentFeeAssignment.deleteMany({
+        where: {
+          feeItemId: feeItem.id
+        }
+      });
+      await tx.feeItem.delete({
+        where: {
+          id: feeItem.id
+        }
+      });
+    });
+
+    return { id: feeItem.id, deleted: true };
   }
 
   async collect(establishmentId: string, dto: CollectPaymentDto) {

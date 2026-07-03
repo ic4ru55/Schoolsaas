@@ -138,6 +138,7 @@ export type FeeItem = {
   dueDate?: string | null;
   required: boolean;
   assignmentsCount: number;
+  paidAmount: number;
   level?: Level | null;
   class?: SchoolClass | null;
 };
@@ -205,6 +206,7 @@ export type PaymentsOverview = {
     paid: number;
     balance: number;
   };
+  alerts: string[];
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
@@ -512,6 +514,32 @@ export function createFeeItem(
     method: "POST",
     body: JSON.stringify(stripEmptyStrings(input))
   });
+}
+
+export function updateFeeItem(
+  establishmentId: string,
+  feeItemId: string,
+  input: Partial<{
+    name: string;
+    amount: number;
+    dueDate: string;
+    classId: string;
+    required: boolean;
+  }>
+) {
+  return request<FeeItem>(`/establishments/${establishmentId}/payments/fee-items/${feeItemId}`, {
+    method: "PATCH",
+    body: JSON.stringify(stripEmptyStrings(input))
+  });
+}
+
+export function deleteFeeItem(establishmentId: string, feeItemId: string) {
+  return request<{ id: string; deleted: boolean }>(
+    `/establishments/${establishmentId}/payments/fee-items/${feeItemId}`,
+    {
+      method: "DELETE"
+    }
+  );
 }
 
 export function assignFeeItem(

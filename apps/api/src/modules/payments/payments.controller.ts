@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { AssignFeeItemDto } from "./dto/assign-fee-item.dto";
 import { CollectPaymentDto } from "./dto/collect-payment.dto";
 import { CreateFeeItemDto } from "./dto/create-fee-item.dto";
+import { UpdateFeeItemDto } from "./dto/update-fee-item.dto";
 import { PaymentsService } from "./payments.service";
 
 @ApiTags("payments")
@@ -33,6 +34,23 @@ export class PaymentsController {
     @Body() dto: AssignFeeItemDto
   ) {
     return this.paymentsService.assignFeeItem(establishmentId, feeItemId, dto);
+  }
+
+  @Patch("fee-items/:feeItemId")
+  updateFeeItem(
+    @Param("establishmentId") establishmentId: string,
+    @Param("feeItemId") feeItemId: string,
+    @Body() dto: UpdateFeeItemDto
+  ) {
+    return this.paymentsService.updateFeeItem(establishmentId, feeItemId, dto);
+  }
+
+  @Delete("fee-items/:feeItemId")
+  deleteFeeItem(
+    @Param("establishmentId") establishmentId: string,
+    @Param("feeItemId") feeItemId: string
+  ) {
+    return this.paymentsService.deleteFeeItem(establishmentId, feeItemId);
   }
 
   @Post("collect")

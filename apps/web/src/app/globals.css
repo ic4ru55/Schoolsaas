@@ -349,6 +349,17 @@ select {
   grid-column: 1 / -1;
 }
 
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox-field input {
+  width: 18px;
+  min-height: 18px;
+}
+
 .field span {
   color: var(--muted);
   font-size: 13px;
@@ -442,6 +453,20 @@ select {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.class-fee-builder {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+  padding: 12px;
+}
+
+.class-fee-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(120px, 0.45fr) minmax(150px, 0.45fr);
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
 .segmented-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -481,6 +506,10 @@ select {
   gap: 12px;
   border-bottom: 1px solid var(--line);
   padding-bottom: 10px;
+}
+
+.section-title.compact {
+  margin-bottom: 10px;
 }
 
 .section-title strong {
@@ -800,6 +829,27 @@ select {
   margin-bottom: 18px;
 }
 
+.finance-alert-grid {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.finance-alert {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border-left: 3px solid var(--amber);
+  border-radius: 8px;
+  background: #fff8ec;
+  color: #6b4b1d;
+  padding: 12px;
+}
+
+.finance-alert span {
+  font-size: 14px;
+}
+
 .finance-summary-card {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -845,17 +895,51 @@ select {
   padding: 10px 12px;
 }
 
+.finance-row:has(.fee-edit-form) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .finance-row strong,
 .finance-row span,
 .payment-assignment-row span,
-.payment-assignment-row strong {
+.payment-assignment-row strong,
+.payment-assignment-row small {
   display: block;
   font-size: 13px;
 }
 
-.finance-row span {
+.finance-row span,
+.payment-assignment-row small {
   color: var(--muted);
   margin-top: 2px;
+}
+
+.fee-edit-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(120px, 0.45fr) minmax(150px, 0.45fr) minmax(150px, 0.5fr);
+  gap: 10px;
+}
+
+.fee-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.fee-edit-form .fee-action-row {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+}
+
+.danger-button {
+  color: var(--wine);
+}
+
+.danger-button:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 
 .payment-student-table {
@@ -1030,7 +1114,9 @@ select {
   }
 
   .finance-grid,
-  .payment-workspace {
+  .payment-workspace,
+  .fee-edit-form,
+  .class-fee-row {
     grid-template-columns: 1fr;
   }
 }
