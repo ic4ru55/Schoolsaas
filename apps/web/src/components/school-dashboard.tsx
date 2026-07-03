@@ -1579,8 +1579,19 @@ export function SchoolDashboard() {
                 <GraduationCap size={20} />
               </div>
 
-              <div className="settings-grid">
-                <form className="settings-block" onSubmit={handleCreateStudent}>
+              {alerts.length ? (
+                <div className="inline-alerts">
+                  {alerts.map((alert) => (
+                    <div className="alert-item" key={alert}>
+                      <AlertTriangle size={18} />
+                      <span>{alert}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              <div className="student-workspace">
+                <form className="settings-block student-enrollment-form" onSubmit={handleCreateStudent}>
                   <div className="section-title">
                     <strong>Nouvelle inscription</strong>
                     <span>{activeYear ? `Annee : ${activeYear.name}` : "Classe requise"}</span>
@@ -1730,7 +1741,7 @@ export function SchoolDashboard() {
                   </div>
                 </form>
 
-                <div className="settings-block">
+                <div className="settings-block student-records-panel">
                   <div className="section-title">
                     <strong>Liste des eleves</strong>
                     <span>{filteredStudents.length} dossier(s)</span>
@@ -1839,22 +1850,23 @@ export function SchoolDashboard() {
                       </span>
                     </div>
                     <form className="setup-form" onSubmit={handleUploadStudentDocument}>
-                      <label className="field full">
-                        <span className="required">Eleve</span>
-                        <select
-                          disabled={!students.length || documentSaving}
-                          required
-                          value={selectedDocumentStudentId}
-                          onChange={(event) => setSelectedDocumentStudentId(event.target.value)}
-                        >
-                          <option value="">Choisir un eleve</option>
-                          {students.map((student) => (
-                            <option key={student.id} value={student.id}>
-                              {student.matricule} - {student.lastName} {student.firstName}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                      <div className="selected-student-card field full">
+                        {selectedDocumentStudent ? (
+                          <div>
+                            <span>Eleve selectionne</span>
+                            <strong>
+                              {selectedDocumentStudent.matricule} - {selectedDocumentStudent.lastName}{" "}
+                              {selectedDocumentStudent.firstName}
+                            </strong>
+                            <small>Clique une ligne dans la table pour changer de dossier.</small>
+                          </div>
+                        ) : (
+                          <div>
+                            <span>Aucun eleve selectionne</span>
+                            <strong>Recherche puis clique une ligne dans la table.</strong>
+                          </div>
+                        )}
+                      </div>
                       <label className="field">
                         <span className="required">Type</span>
                         <select
@@ -2049,76 +2061,109 @@ export function SchoolDashboard() {
 
           {activeView === "dashboard" ? (
           <aside>
-            <div className="panel">
-              <div className="panel-header">
-                <div>
-                  <h2>Nouvel etablissement</h2>
-                  <span>Licence essai</span>
+            {establishments.length === 0 ? (
+              <div className="panel">
+                <div className="panel-header">
+                  <div>
+                    <h2>Nouvel etablissement</h2>
+                    <span>Amorcage du compte</span>
+                  </div>
                 </div>
+                <form className="setup-form" onSubmit={handleCreate}>
+                  <label className="field full">
+                    <span className="required">Nom</span>
+                    <input
+                      required
+                      minLength={2}
+                      value={form.name}
+                      onChange={(event) => setForm({ ...form, name: event.target.value })}
+                      placeholder="Exemple : Lycee Wend-Panga"
+                    />
+                  </label>
+                  <label className="field full">
+                    <span className="required">Type</span>
+                    <select
+                      value={form.type}
+                      onChange={(event) => setForm({ ...form, type: event.target.value })}
+                    >
+                      <option value="PRIMARY">Primaire</option>
+                      <option value="COLLEGE">College</option>
+                      <option value="HIGH_SCHOOL">Lycee</option>
+                      <option value="INSTITUTE">Institut</option>
+                      <option value="UNIVERSITY">Universite</option>
+                      <option value="TRAINING_CENTER">Centre de formation</option>
+                    </select>
+                  </label>
+                  <label className="field full">
+                    <span className="required">Ville</span>
+                    <input
+                      required
+                      placeholder="Exemple : Ouagadougou"
+                      value={form.city}
+                      onChange={(event) => setForm({ ...form, city: event.target.value })}
+                    />
+                  </label>
+                  <label className="field full">
+                    <span>Telephone</span>
+                    <input
+                      inputMode="numeric"
+                      maxLength={8}
+                      pattern="[0-9]{8}"
+                      placeholder="Exemple : 72007342"
+                      value={form.phone}
+                      onChange={(event) => setForm({ ...form, phone: cleanPhone(event.target.value) })}
+                    />
+                    <small>8 chiffres exactement si renseigne.</small>
+                  </label>
+                  <label className="field full">
+                    <span>Email</span>
+                    <input
+                      type="email"
+                      pattern="^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$"
+                      placeholder="Exemple : contact@ecole.bf"
+                      value={form.email}
+                      onChange={(event) => setForm({ ...form, email: event.target.value })}
+                    />
+                    <small>Exemple valide : contact@ecole.bf.</small>
+                  </label>
+                  <button className="primary-button field full" disabled={saving} type="submit">
+                    {saving ? <Loader2 size={17} /> : <Plus size={17} />}
+                    Creer
+                  </button>
+                </form>
               </div>
-              <form className="setup-form" onSubmit={handleCreate}>
-                <label className="field full">
-                  <span className="required">Nom</span>
-                  <input
-                    required
-                    minLength={2}
-                    value={form.name}
-                    onChange={(event) => setForm({ ...form, name: event.target.value })}
-                    placeholder="Exemple : Lycee Wend-Panga"
-                  />
-                </label>
-                <label className="field full">
-                  <span className="required">Type</span>
-                  <select
-                    value={form.type}
-                    onChange={(event) => setForm({ ...form, type: event.target.value })}
-                  >
-                    <option value="PRIMARY">Primaire</option>
-                    <option value="COLLEGE">College</option>
-                    <option value="HIGH_SCHOOL">Lycee</option>
-                    <option value="INSTITUTE">Institut</option>
-                    <option value="UNIVERSITY">Universite</option>
-                    <option value="TRAINING_CENTER">Centre de formation</option>
-                  </select>
-                </label>
-                <label className="field full">
-                  <span className="required">Ville</span>
-                  <input
-                    required
-                    placeholder="Exemple : Ouagadougou"
-                    value={form.city}
-                    onChange={(event) => setForm({ ...form, city: event.target.value })}
-                  />
-                </label>
-                <label className="field full">
-                  <span>Telephone</span>
-                  <input
-                    inputMode="numeric"
-                    maxLength={8}
-                    pattern="[0-9]{8}"
-                    placeholder="Exemple : 72007342"
-                    value={form.phone}
-                    onChange={(event) => setForm({ ...form, phone: cleanPhone(event.target.value) })}
-                  />
-                  <small>8 chiffres exactement si renseigne.</small>
-                </label>
-                <label className="field full">
-                  <span>Email</span>
-                  <input
-                    type="email"
-                    pattern="^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$"
-                    placeholder="Exemple : contact@ecole.bf"
-                    value={form.email}
-                    onChange={(event) => setForm({ ...form, email: event.target.value })}
-                  />
-                  <small>Exemple valide : contact@ecole.bf.</small>
-                </label>
-                <button className="primary-button field full" disabled={saving} type="submit">
-                  {saving ? <Loader2 size={17} /> : <Plus size={17} />}
-                  Creer
-                </button>
-              </form>
-            </div>
+            ) : (
+              <div className="panel">
+                <div className="panel-header">
+                  <div>
+                    <h2>Etablissement actif</h2>
+                    <span>Contexte de travail</span>
+                  </div>
+                  <Building2 size={20} />
+                </div>
+                <div className="context-list">
+                  <div className="context-row">
+                    <span>Nom</span>
+                    <strong>{selected?.name ?? "Aucun etablissement"}</strong>
+                  </div>
+                  <div className="context-row">
+                    <span>Ville</span>
+                    <strong>{selected?.city ?? "Non renseignee"}</strong>
+                  </div>
+                  <div className="context-row">
+                    <span>Annee active</span>
+                    <strong>{activeYear?.name ?? "Aucune"}</strong>
+                  </div>
+                  <div className="context-row">
+                    <span>Licence</span>
+                    <strong>{selected?.licenses?.[0]?.status ?? "TRIAL"}</strong>
+                  </div>
+                </div>
+                <p className="panel-note">
+                  La creation d'un autre etablissement sera reservee a l'admin plateforme.
+                </p>
+              </div>
+            )}
 
             <div className="panel">
               <div className="panel-header">

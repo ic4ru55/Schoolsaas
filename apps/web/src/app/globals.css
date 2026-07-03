@@ -287,6 +287,37 @@ select {
   font-size: 13px;
 }
 
+.context-list {
+  display: grid;
+  gap: 10px;
+}
+
+.context-row {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.context-row:last-child {
+  border-bottom: 0;
+}
+
+.context-row span,
+.panel-note {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.context-row strong {
+  font-size: 15px;
+}
+
+.panel-note {
+  margin: 12px 0 0;
+}
+
 .setup-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -537,6 +568,21 @@ select {
   font-size: 13px;
 }
 
+.student-workspace {
+  display: grid;
+  gap: 20px;
+}
+
+.student-enrollment-form,
+.student-records-panel {
+  min-width: 0;
+}
+
+.student-records-panel {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+
 .student-list-tools {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(160px, 0.6fr);
@@ -600,6 +646,24 @@ select {
   color: var(--muted);
   font-size: 13px;
   margin-top: 2px;
+}
+
+.selected-student-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+  padding: 12px;
+}
+
+.selected-student-card span,
+.selected-student-card small {
+  display: block;
+  color: var(--muted);
+}
+
+.selected-student-card strong {
+  display: block;
+  margin-top: 4px;
 }
 
 .document-panel {
@@ -712,6 +776,12 @@ select {
 .alert-list {
   display: grid;
   gap: 10px;
+}
+
+.inline-alerts {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
 }
 
 .alert-item {
