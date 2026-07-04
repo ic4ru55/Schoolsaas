@@ -20,6 +20,12 @@ export type Establishment = {
   studentMatriculeNextNumber: number;
   studentMatriculePadding: number;
   reportCardColor?: string;
+  reportCardHeaderLeft?: string | null;
+  reportCardHeaderCenter?: string | null;
+  reportCardHeaderRight?: string | null;
+  reportCardTitle?: string | null;
+  reportCardSignerTitle?: string | null;
+  reportCardSignerName?: string | null;
   academicYears?: AcademicYear[];
   modules?: Array<{ moduleCode: string; enabled: boolean }>;
   licenses?: Array<{ planCode: string; status: string }>;
@@ -611,6 +617,13 @@ export function updateEstablishment(
     studentMatriculeFormat: string;
     studentMatriculeNextNumber: number;
     studentMatriculePadding: number;
+    reportCardColor: string;
+    reportCardHeaderLeft: string;
+    reportCardHeaderCenter: string;
+    reportCardHeaderRight: string;
+    reportCardTitle: string;
+    reportCardSignerTitle: string;
+    reportCardSignerName: string;
   }>
 ) {
   return request<Establishment>(`/establishments/${establishmentId}`, {
@@ -1321,4 +1334,3 @@ export function getAuditLogStats(establishmentId?: string) {
   const qs = establishmentId ? `?establishmentId=${establishmentId}` : "";
   return request<AuditLogStats>(`/audit-logs/stats${qs}`);
 }
-

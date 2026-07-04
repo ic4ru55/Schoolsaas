@@ -91,6 +91,12 @@ model Establishment {
   studentMatriculeNextNumber Int          @default(1)
   studentMatriculePadding    Int          @default(4)
   reportCardColor            String       @default("#1e3a8a")
+  reportCardHeaderLeft       String?
+  reportCardHeaderCenter     String?
+  reportCardHeaderRight      String?
+  reportCardTitle            String       @default("BULLETIN DE NOTES")
+  reportCardSignerTitle      String       @default("Le Chef d'Etablissement")
+  reportCardSignerName       String?
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
   academicYears        AcademicYear[]

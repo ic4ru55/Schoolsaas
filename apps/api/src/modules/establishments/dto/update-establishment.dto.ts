@@ -55,4 +55,34 @@ export class UpdateEstablishmentDto extends PartialType(CreateEstablishmentDto) 
     message: "La couleur du bulletin doit être un code hexadécimal valide (ex: #1e3a8a)."
   })
   reportCardColor?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 1000)
+  reportCardHeaderLeft?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 1000)
+  reportCardHeaderCenter?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 1000)
+  reportCardHeaderRight?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(2, 80)
+  reportCardTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(2, 80)
+  reportCardSignerTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 120)
+  reportCardSignerName?: string;
 }

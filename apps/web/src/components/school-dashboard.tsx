@@ -352,6 +352,23 @@ function formatMoney(amount: number, currency = "XOF") {
   return `${Math.round(amount).toLocaleString("fr-FR")} ${currency}`;
 }
 
+function formatScore(value?: number | null) {
+  return value === null || value === undefined
+    ? "-"
+    : value.toLocaleString("fr-FR", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+}
+
+function reportCurrencyLabel(currency?: string | null) {
+  if (!currency || currency === "XOF") {
+    return "FRANCS CFA";
+  }
+
+  return currency;
+}
+
 function paymentMethodLabel(value: string) {
   const labels: Record<string, string> = {
     CASH: "Especes",
@@ -439,6 +456,47 @@ function escapeHtml(value: string) {
     };
     return entities[character];
   });
+}
+
+function compactLines(lines: Array<string | null | undefined>) {
+  return lines
+    .map((line) => line?.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function nlToHtml(value: string) {
+  return escapeHtml(value).replace(/\r?\n/g, "<br/>");
+}
+
+function officialHeaderHtml(value: string) {
+  const [firstLine = "", ...restLines] = value.split(/\r?\n/);
+  const restMarkup = restLines.length ? `<br/>${restLines.map((line) => escapeHtml(line)).join("<br/>")}` : "";
+
+  return `<strong>${escapeHtml(firstLine)}</strong>${restMarkup}`;
+}
+
+function reportCardHeaderLeftText(establishment?: Establishment | null) {
+  return (
+    establishment?.reportCardHeaderLeft?.trim() ||
+    compactLines([
+      establishment?.name,
+      establishment?.address,
+      establishment?.city,
+      establishment?.phone ? `Tel : ${establishment.phone}` : ""
+    ])
+  );
+}
+
+function reportCardHeaderCenterText(establishment?: Establishment | null) {
+  return establishment?.reportCardHeaderCenter?.trim() || "";
+}
+
+function reportCardHeaderRightText(establishment?: Establishment | null) {
+  return (
+    establishment?.reportCardHeaderRight?.trim() ||
+    reportCurrencyLabel(establishment?.currency)
+  );
 }
 
 function matriculeYear(value?: string | null) {
@@ -686,7 +744,13 @@ export function SchoolDashboard({
     studentMatriculeFormat: "{PREFIX}-{YEAR}-{SEQ}",
     studentMatriculeNextNumber: 1,
     studentMatriculePadding: 4,
-    reportCardColor: "#4f46e5"
+    reportCardColor: "#4f46e5",
+    reportCardHeaderLeft: "",
+    reportCardHeaderCenter: "",
+    reportCardHeaderRight: "",
+    reportCardTitle: "BULLETIN DE NOTES",
+    reportCardSignerTitle: "Le Chef d'Etablissement",
+    reportCardSignerName: ""
   });
   const [yearForm, setYearForm] = useState({
     name: "2026-2027",
@@ -1049,7 +1113,13 @@ export function SchoolDashboard({
       studentMatriculeFormat: selected.studentMatriculeFormat ?? "{PREFIX}-{YEAR}-{SEQ}",
       studentMatriculeNextNumber: selected.studentMatriculeNextNumber ?? 1,
       studentMatriculePadding: selected.studentMatriculePadding ?? 4,
-      reportCardColor: selected.reportCardColor ?? "#1e3a8a"
+      reportCardColor: selected.reportCardColor ?? "#1e3a8a",
+      reportCardHeaderLeft: selected.reportCardHeaderLeft ?? "",
+      reportCardHeaderCenter: selected.reportCardHeaderCenter ?? "",
+      reportCardHeaderRight: selected.reportCardHeaderRight ?? "",
+      reportCardTitle: selected.reportCardTitle ?? "BULLETIN DE NOTES",
+      reportCardSignerTitle: selected.reportCardSignerTitle ?? "Le Chef d'Etablissement",
+      reportCardSignerName: selected.reportCardSignerName ?? ""
     });
   }, [selected]);
 
@@ -2618,10 +2688,19 @@ export function SchoolDashboard({
       const logoUrl = apiFileUrl(data.establishment?.logoUrl);
       const stampUrl = apiFileUrl(data.establishment?.stampUrl);
       const directorSignatureUrl = apiFileUrl(data.establishment?.directorSignatureUrl);
+      const headerLeftText = reportCardHeaderLeftText(data.establishment);
+      const headerCenterText = reportCardHeaderCenterText(data.establishment);
+      const headerRightText = reportCardHeaderRightText(data.establishment);
+      const reportTitle = data.establishment?.reportCardTitle?.trim() || "BULLETIN DE NOTES";
+      const signerTitle = data.establishment?.reportCardSignerTitle?.trim() || "Le Chef d'Etablissement";
+      const signerName = data.establishment?.reportCardSignerName?.trim() || "";
 
       const logoMarkup = logoUrl
         ? `<img class="logo" src="${escapeHtml(logoUrl)}" alt="Logo" />`
         : `<div class="logo-fallback">${escapeHtml(data.establishment?.name.slice(0, 2).toUpperCase() ?? "EC")}</div>`;
+      const centerTextMarkup = headerCenterText
+        ? `<div class="header-center-text">${nlToHtml(headerCenterText)}</div>`
+        : "";
 
       const stampMarkup = stampUrl
         ? `<img class="stamp" src="${escapeHtml(stampUrl)}" alt="Cachet" />`
@@ -2630,8 +2709,13 @@ export function SchoolDashboard({
       const signatureMarkup = directorSignatureUrl
         ? `<img class="signature" src="${escapeHtml(directorSignatureUrl)}" alt="Signature Directeur" />`
         : "";
+      const signerNameMarkup = signerName ? `<div class="sig-name">${escapeHtml(signerName)}</div>` : "";
 
-      const themeColor = data.establishment?.reportCardColor || "#1e3a8a";
+      const savedReportColor = data.establishment?.reportCardColor?.toLowerCase();
+      const themeColor =
+        !savedReportColor || savedReportColor === "#1e3a8a" || savedReportColor === "#4f46e5"
+          ? "#f6a2aa"
+          : data.establishment?.reportCardColor || "#f6a2aa";
 
       let html = `<!doctype html>
 <html lang="fr">
@@ -2639,63 +2723,59 @@ export function SchoolDashboard({
   <meta charset="utf-8" />
   <title>Bulletins - ${escapeHtml(data.schoolClass.name)} - ${escapeHtml(data.period.name)}</title>
   <style>
+    @page { size: A4 portrait; margin: 0; }
     @media print {
       body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      .bulletin-page { page-break-after: always; height: 100vh; display: flex; flex-direction: column; box-sizing: border-box; padding: 14px 20px; }
+      .bulletin-page { page-break-after: always; box-shadow: none; margin: 0; }
       .bulletin-page:last-child { page-break-after: avoid; }
     }
     * { box-sizing: border-box; }
-    body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1f2937; line-height: 1.35; font-size: 11px; margin: 0; }
-    .bulletin-page { padding: 20px 30px; max-width: 850px; margin: 0 auto; min-height: 1100px; display: flex; flex-direction: column; border: 2px solid ${themeColor}; }
-
-    /* === EN-TÊTE PAYS === */
-    .country-header { display: flex; justify-content: space-between; align-items: flex-start; text-align: center; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 2px solid ${themeColor}; }
-    .country-left { text-align: left; flex: 1; font-size: 10px; line-height: 1.3; }
-    .country-left strong { font-size: 12px; display: block; text-transform: uppercase; color: ${themeColor}; }
-    .country-center { flex: 1; display: flex; flex-direction: column; align-items: center; }
-    .country-right { text-align: right; flex: 1; font-size: 10px; line-height: 1.3; }
-    .country-right strong { font-size: 12px; display: block; text-transform: uppercase; color: ${themeColor}; }
-
-    .logo { width: 60px; height: 60px; object-fit: contain; }
-    .logo-fallback { display: grid; width: 60px; height: 60px; place-items: center; background: ${themeColor}; color: white; font-weight: 800; font-size: 18px; border-radius: 6px; }
-
-    /* === TITRE BULLETIN === */
-    .bulletin-title { text-align: center; background: ${themeColor}; color: white; padding: 6px 0; margin: 6px 0; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; border-radius: 4px; }
-
-    /* === INFO ÉLÈVE === */
-    .student-info { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px; font-size: 11px; margin-bottom: 8px; padding: 6px 10px; background: #f8f9fa; border-left: 4px solid ${themeColor}; border-radius: 0 4px 4px 0; }
-    .student-info p { margin: 2px 0; }
-    .student-info strong { color: #111; }
-
-    /* === TABLEAU NOTES === */
-    table { width: 100%; border-collapse: collapse; font-size: 10px; }
-    th, td { border: 1px solid #999; padding: 4px 5px; text-align: center; }
-    th { background: ${themeColor}; color: white; font-weight: 600; text-transform: uppercase; font-size: 9px; letter-spacing: 0.03em; }
-    .subject-name { text-align: left; font-weight: 600; }
-    .group-header td { background: ${themeColor}22; font-weight: 700; text-align: left; font-size: 10px; color: ${themeColor}; text-transform: uppercase; letter-spacing: 0.05em; border-top: 2px solid ${themeColor}; }
-    .subtotal-row td { background: #f0f0f0; font-weight: 700; font-size: 10px; border-top: 1.5px solid ${themeColor}; }
-    .grand-total td { background: ${themeColor}; color: white; font-weight: 700; font-size: 11px; }
-    tr:nth-child(even):not(.group-header):not(.subtotal-row):not(.grand-total) td { background: #fafafa; }
-
-    .appreciation { font-size: 9px; font-style: italic; text-align: left; }
-
-    /* === PIED DE PAGE === */
-    .footer-section { margin-top: auto; padding-top: 8px; }
-    .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; font-size: 11px; }
-    .summary-box { border: 1px solid #ccc; border-radius: 4px; padding: 8px 10px; }
-    .summary-box h4 { margin: 0 0 4px 0; font-size: 11px; color: ${themeColor}; border-bottom: 1px solid #eee; padding-bottom: 3px; }
-    .summary-box p { margin: 2px 0; }
-
-    .decision-box { text-align: center; border: 2px solid ${themeColor}; border-radius: 4px; padding: 6px; margin-bottom: 8px; font-size: 12px; font-weight: 700; }
-
-    .signatures-row { display: flex; justify-content: space-between; text-align: center; margin-top: 6px; }
-    .sig-block { min-width: 140px; position: relative; }
-    .sig-block .sig-title { font-weight: 600; font-size: 10px; color: #374151; margin-bottom: 40px; display: block; }
-    .sig-block .sig-name { font-size: 10px; font-weight: 600; margin-top: 4px; }
-    .stamp { max-width: 90px; max-height: 60px; position: absolute; bottom: 0; right: 0; opacity: 0.8; }
-    .signature { max-width: 100px; max-height: 50px; object-fit: contain; }
-
-    .disclaimer { text-align: center; font-size: 8px; color: #999; margin-top: 4px; font-style: italic; }
+    body { margin: 0; background: #2b2b2b; color: #000; font-family: Arial, Helvetica, sans-serif; font-size: 10px; line-height: 1.15; }
+    .bulletin-page { width: 794px; min-height: 1123px; margin: 0 auto; padding: 28px 18px 24px; background: ${themeColor}; display: flex; flex-direction: column; color: #000; }
+    .report-header { display: grid; grid-template-columns: 1.35fr 1fr 1fr; align-items: start; min-height: 132px; }
+    .school-heading { text-align: center; font-weight: 800; font-size: 12px; line-height: 1.55; padding-top: 28px; }
+    .school-heading strong { display: block; text-transform: uppercase; }
+    .header-center { text-align: center; padding-top: 16px; font-size: 10px; font-weight: 700; }
+    .header-center-text { padding-top: 36px; line-height: 1.35; }
+    .identity-mark { display: grid; justify-items: center; gap: 8px; padding-top: 8px; text-align: center; font-weight: 800; }
+    .logo { width: 88px; height: 88px; object-fit: contain; }
+    .logo-fallback { display: grid; width: 88px; height: 88px; place-items: center; border: 2px solid #111; border-radius: 50%; color: #111; font-weight: 900; font-size: 26px; background: transparent; }
+    .currency-label { font-size: 12px; text-transform: uppercase; }
+    .bulletin-title { display: grid; justify-items: center; gap: 4px; margin: -12px 0 6px; text-align: center; }
+    .bulletin-title strong { font-size: 19px; font-style: italic; font-weight: 900; text-transform: uppercase; }
+    .bulletin-title span { font-size: 15px; font-weight: 900; }
+    .meta-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 3px 12px; margin: 0 18px 4px; font-size: 12px; }
+    .meta-grid .center { text-align: center; }
+    .meta-grid .right { text-align: right; }
+    .meta-grid strong { font-weight: 900; }
+    table { width: 100%; border-collapse: collapse; background: transparent; color: #000; }
+    th, td { border: 1px solid #000; padding: 4px 6px; text-align: center; vertical-align: middle; }
+    th { font-size: 9px; font-weight: 900; }
+    .grades-table { font-size: 10px; }
+    .grades-table td { height: 28px; }
+    .subject-name { text-align: left; font-weight: 900; text-transform: uppercase; }
+    .group-header td { height: 22px; font-weight: 900; text-align: center; text-transform: uppercase; }
+    .subtotal-row td { height: 26px; font-weight: 900; }
+    .group-summary td { height: 28px; font-family: Georgia, 'Times New Roman', serif; font-size: 13px; font-weight: 900; }
+    .grand-total td { height: 30px; font-weight: 900; }
+    .appreciation { text-align: left; font-weight: 900; }
+    .summary-table { margin-top: 0; font-size: 11px; }
+    .summary-table td { height: 22px; padding: 3px 6px; }
+    .summary-label { font-family: Georgia, 'Times New Roman', serif; font-size: 13px; font-weight: 700; text-align: right; }
+    .summary-value { font-weight: 900; }
+    .rank-box { font-weight: 900; font-size: 14px; }
+    .decision-signature { margin-top: 0; }
+    .decision-signature td { height: 98px; padding: 4px 8px; vertical-align: top; }
+    .decision-title { font-size: 13px; margin-bottom: 10px; }
+    .decision-box { display: grid; place-items: center; min-height: 58px; width: 78%; margin: 0 auto; border: 1px solid #000; font-family: Georgia, 'Times New Roman', serif; font-size: 15px; font-weight: 900; }
+    .official-signature { position: relative; min-height: 94px; text-align: center; font-size: 11px; }
+    .official-signature .city-line { font-size: 12px; margin-bottom: 2px; }
+    .official-signature .sig-title { display: block; font-size: 14px; font-weight: 900; margin-bottom: 0; }
+    .official-signature .sig-name { position: relative; z-index: 2; margin-top: 42px; font-size: 10px; font-weight: 900; }
+    .stamp { max-width: 124px; max-height: 110px; position: absolute; left: 50%; top: 24px; transform: translateX(-50%) rotate(-10deg); opacity: 0.88; }
+    .signature { max-width: 120px; max-height: 48px; object-fit: contain; position: absolute; left: 50%; top: 34px; transform: translateX(-50%); z-index: 2; }
+    .bank-line { margin: 5px 0 0 18px; font-weight: 900; }
+    .disclaimer { margin-top: auto; text-align: center; font-size: 9px; font-weight: 900; }
   </style>
 </head>
 <body>`;
@@ -2725,7 +2805,7 @@ export function SchoolDashboard({
           const groupDenom = subjects.reduce((s: number, sa: any) => sa.average !== null ? s + sa.coefficient : s, 0);
           const groupMoy = groupDenom > 0 ? groupWeighted / groupDenom : null;
 
-          tableRows += '<tr class="group-header"><td colspan="8">' + escapeHtml(groupName) + '</td></tr>';
+          tableRows += '<tr class="group-header"><td colspan="8">' + escapeHtml(groupName.toUpperCase()) + '</td></tr>';
 
           for (const sa of subjects) {
             const grades = sa.grades || [];
@@ -2753,11 +2833,11 @@ export function SchoolDashboard({
             tableRows += '<tr>'
               + '<td class="subject-name">' + escapeHtml(sa.subjectName) + '</td>'
               + '<td>' + sa.coefficient + '</td>'
-              + '<td>' + (avgInterro !== null ? avgInterro.toFixed(2) : "-") + '</td>'
-              + '<td>' + (avgDevoir !== null ? avgDevoir.toFixed(2) : "-") + '</td>'
-              + '<td>' + (avgCompo !== null ? avgCompo.toFixed(2) : "-") + '</td>'
-              + '<td><strong>' + (sa.average !== null ? sa.average.toFixed(2) : "-") + '</strong></td>'
-              + '<td>' + (weighted !== null ? weighted.toFixed(2) : "-") + '</td>'
+              + '<td>' + formatScore(avgInterro) + '</td>'
+              + '<td>' + formatScore(avgDevoir) + '</td>'
+              + '<td>' + formatScore(avgCompo) + '</td>'
+              + '<td><strong>' + formatScore(sa.average) + '</strong></td>'
+              + '<td>' + formatScore(weighted) + '</td>'
               + '<td class="appreciation">' + appreciation + '</td>'
               + '</tr>';
           }
@@ -2766,98 +2846,128 @@ export function SchoolDashboard({
             + '<td style="text-align: left;">Total ' + escapeHtml(groupName.toLowerCase()) + '</td>'
             + '<td>' + groupCoef + '</td>'
             + '<td colspan="3"></td>'
-            + '<td><strong>Moy: ' + (groupMoy !== null ? groupMoy.toFixed(2) : "-") + '</strong></td>'
-            + '<td><strong>' + groupWeighted.toFixed(2) + '</strong></td>'
+            + '<td><strong></strong></td>'
+            + '<td><strong>' + formatScore(groupWeighted) + '</strong></td>'
             + '<td></td>'
+            + '</tr>'
+            + '<tr class="group-summary">'
+            + '<td colspan="3">Moyenne : <strong>' + formatScore(groupMoy) + '</strong></td>'
+            + '<td colspan="3">Meilleure Moyenne : <strong>' + formatScore(data.bestAverage) + '</strong></td>'
+            + '<td colspan="2">Rang : <strong>' + (rs.rank !== null ? rs.rank + "e" : "-") + '</strong></td>'
             + '</tr>';
         }
 
-        const genderStr = rs.student.gender === "MALE" ? "M" : rs.student.gender === "FEMALE" ? "F" : "-";
-        const decisionColor = rs.generalAverage !== null && rs.generalAverage >= 10 ? "#16a34a" : "#dc2626";
-        const decisionText = rs.generalAverage !== null && rs.generalAverage >= 10 ? "ADMIS(E) EN CLASSE SUPÉRIEURE" : "AJOURNÉ(E)";
+        const decisionText = rs.generalAverage !== null && rs.generalAverage >= 10
+          ? "ADMIS EN CLASSE SUPERIEURE"
+          : "AJOURNE";
+        const rankText = rs.rank !== null ? rs.rank + " e" : "-";
+        const periodName = data.period.name;
+        const reportDate = new Date().toLocaleDateString("fr-FR");
+        const cityName = data.establishment?.city ?? "";
+        const studentName = `${rs.student.lastName.toUpperCase()} ${rs.student.firstName}`.trim();
 
-        html += '<div class="bulletin-page"><div>'
-          + '<div class="country-header">'
-          + '<div class="country-left">'
-          + '<strong>Burkina Faso</strong>'
-          + 'Unité - Progrès - Justice<br/>'
-          + '————————<br/>'
-          + "Ministère de l'Éducation<br/>"
-          + 'Nationale et de la Promotion<br/>'
-          + 'des Langues Nationales'
-          + '</div>'
-          + '<div class="country-center">' + logoMarkup + '</div>'
-          + '<div class="country-right">'
-          + '<strong>' + escapeHtml(data.establishment?.name ?? "") + '</strong>'
-          + escapeHtml(data.establishment?.city ?? "") + '<br/>'
-          + 'Tél : ' + escapeHtml(data.establishment?.phone ?? "") + '<br/>'
-          + escapeHtml(data.establishment?.motto ?? "")
-          + '</div>'
+        html += '<div class="bulletin-page">'
+          + '<div class="report-header">'
+          + '<div class="school-heading">' + officialHeaderHtml(headerLeftText) + '</div>'
+          + '<div class="header-center">' + centerTextMarkup + '</div>'
+          + '<div class="identity-mark">' + logoMarkup + '<div class="currency-label">' + nlToHtml(headerRightText) + '</div></div>'
           + '</div>'
 
-          + '<div class="bulletin-title">BULLETIN DE NOTES — ' + escapeHtml(data.period.name) + '</div>'
+          + '<div class="bulletin-title">'
+          + '<strong>' + escapeHtml(reportTitle) + '</strong>'
+          + '<span>' + escapeHtml(periodName) + '</span>'
+          + '</div>'
 
-          + '<div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">'
+          + '<div class="meta-grid">'
           + '<span>Année scolaire : <strong>' + escapeHtml(data.academicYear?.name ?? "") + '</strong></span>'
-          + '<span>Effectif : <strong>' + data.totalStudents + ' élèves</strong></span>'
+          + '<span></span>'
+          + '<span class="right">Effectif : <strong>' + data.totalStudents + '</strong></span>'
+          + "<span style=\"grid-column: 1 / 3;\">Nom de l'élève : <strong>" + escapeHtml(studentName) + '</strong></span>'
+          + '<span class="right">Classe redoublée : <strong></strong></span>'
+          + '<span>Né(e) : <strong>' + birthStr + '</strong></span>'
+          + '<span class="center">Matricule : <strong>' + escapeHtml(rs.student.matricule) + '</strong></span>'
+          + '<span class="right">Classe : <strong>' + escapeHtml(data.schoolClass.name) + '</strong></span>'
           + '</div>'
 
-          + '<div class="student-info">'
-          + "<p>Nom de l'élève : <strong>" + escapeHtml(rs.student.lastName.toUpperCase()) + " " + escapeHtml(rs.student.firstName) + '</strong></p>'
-          + '<p>Classe : <strong>' + escapeHtml(data.schoolClass.name) + '</strong></p>'
-          + '<p>Né(e) le : <strong>' + birthStr + '</strong> | Sexe : <strong>' + genderStr + '</strong></p>'
-          + '<p>Matricule : <strong>' + escapeHtml(rs.student.matricule) + '</strong></p>'
-          + '</div>'
-
-          + '<table><thead><tr>'
-          + '<th style="width: 22%;">Matières</th>'
+          + '<table class="grades-table"><thead><tr>'
+          + '<th style="width: 27%;">Matières</th>'
           + '<th style="width: 6%;">Coef</th>'
-          + '<th style="width: 9%;">Interro</th>'
-          + '<th style="width: 9%;">Devoir</th>'
-          + '<th style="width: 9%;">Compo</th>'
-          + '<th style="width: 9%;">Moy</th>'
-          + '<th style="width: 11%;">Notes Pond.</th>'
-          + '<th style="width: 25%;">Appréciation</th>'
+          + '<th style="width: 9%;">Interro<br/>(1)</th>'
+          + '<th style="width: 8%;">Dev<br/>(2)</th>'
+          + '<th style="width: 8%;">Compo<br/>(2)</th>'
+          + '<th style="width: 8%;">Moy</th>'
+          + '<th style="width: 10%;">Notes<br/>Pondérées</th>'
+          + '<th style="width: 24%;">Appréciation et Signatures</th>'
           + '</tr></thead><tbody>'
           + tableRows
-          + '<tr class="grand-total">'
-          + '<td style="text-align: left;">TOTAL GÉNÉRAL</td>'
-          + '<td>' + totalCoef + '</td>'
+          + '<tr class="grand-total"><td colspan="8"></td></tr>'
+          + '</tbody></table>'
+
+          + '<table class="summary-table"><tbody>'
+          + '<tr>'
+          + '<td colspan="2" class="summary-label">TOTAL COEFFICIENT :</td>'
+          + '<td class="summary-value">' + totalCoef + '</td>'
+          + '<td colspan="2" class="summary-label">TOTAL NOTES PONDEREES :</td>'
+          + '<td class="summary-value">' + formatScore(totalWeighted) + '</td>'
+          + '</tr>'
+          + '<tr>'
+          + '<td colspan="2" class="summary-label">MOYENNE SUR 20</td>'
+          + '<td class="summary-value">' + formatScore(rs.generalAverage) + '</td>'
+          + '<td colspan="3"><strong>Nombres d’heures d’absences</strong> &nbsp; justifiées&nbsp;&nbsp; <strong>0</strong> &nbsp;&nbsp; non justifiées&nbsp;&nbsp; <strong>0</strong></td>'
+          + '</tr>'
+          + '<tr>'
+          + '<td colspan="2" class="summary-label">RETRAIT DES POINTS</td>'
+          + '<td class="summary-value">0,00</td>'
           + '<td colspan="3"></td>'
-          + '<td><strong>' + (rs.generalAverage !== null ? rs.generalAverage.toFixed(2) : "-") + '</strong></td>'
-          + '<td><strong>' + (totalWeighted !== null ? totalWeighted.toFixed(2) : "-") + '</strong></td>'
-          + '<td>Rang : <strong>' + (rs.rank !== null ? rs.rank + "e / " + data.totalStudents : "-") + '</strong></td>'
-          + '</tr></tbody></table></div>'
+          + '</tr>'
+          + '<tr>'
+          + '<td colspan="2" class="summary-label">MOYENNE DEFINITIVE</td>'
+          + '<td class="summary-value">' + formatScore(rs.generalAverage) + '</td>'
+          + '<td colspan="3" style="text-align:left;">Conduite :</td>'
+          + '</tr>'
+          + '<tr>'
+          + "<td class=\"summary-label\">Moyenne de l’élève</td>"
+          + '<td class="summary-value">' + formatScore(rs.generalAverage) + '</td>'
+          + '<td rowspan="5" class="rank-box">Rang<br/>' + escapeHtml(rankText) + '</td>'
+          + '<td colspan="3">Rappel Moyennes</td>'
+          + '</tr>'
+          + '<tr>'
+          + '<td class="summary-label">Moyenne de la classe</td>'
+          + '<td class="summary-value">' + formatScore(data.classAverage) + '</td>'
+          + '<td>1er Trimestre</td><td>2e Trimestre</td><td>-</td>'
+          + '</tr>'
+          + '<tr>'
+          + '<td class="summary-label">Meilleure moyenne</td>'
+          + '<td class="summary-value">' + formatScore(data.bestAverage) + '</td>'
+          + '<td>-</td><td>-</td><td>-</td>'
+          + '</tr>'
+          + '<tr>'
+          + '<td class="summary-label">Plus faible moyenne</td>'
+          + '<td class="summary-value">' + formatScore(data.worstAverage) + '</td>'
+          + '<td colspan="3"></td>'
+          + '</tr>'
+          + '<tr>'
+          + '<td class="summary-label">Moyenne annuelle</td>'
+          + '<td class="summary-value">' + formatScore(rs.generalAverage) + '</td>'
+          + '<td colspan="2">' + (rs.generalAverage !== null && rs.generalAverage >= 10 ? "Passable" : "Insuffisant") + '</td>'
+          + '<td>Rang annuel : ' + escapeHtml(rankText) + '</td>'
+          + '</tr>'
+          + '</tbody></table>'
 
-          + '<div class="footer-section">'
-          + '<div class="summary-grid">'
-          + '<div class="summary-box">'
-          + "<h4>Résultats de l'élève</h4>"
-          + "<p>Moyenne de l'élève : <strong>" + (rs.generalAverage !== null ? rs.generalAverage.toFixed(2) : "-") + " / 20</strong></p>"
-          + '<p>Rang : <strong>' + (rs.rank !== null ? rs.rank + "e / " + data.totalStudents : "-") + '</strong></p>'
-          + '<p>Total notes pondérées : <strong>' + (totalWeighted !== null ? totalWeighted.toFixed(2) : "-") + '</strong></p>'
-          + '</div>'
-          + '<div class="summary-box">'
-          + '<h4>Résultats de la classe</h4>'
-          + '<p>Moyenne de la classe : <strong>' + (data.classAverage !== null ? data.classAverage.toFixed(2) : "-") + ' / 20</strong></p>'
-          + '<p>Meilleure moyenne : <strong>' + (data.bestAverage !== null ? Number(data.bestAverage).toFixed(2) : "-") + '</strong></p>'
-          + '<p>Plus faible moyenne : <strong>' + (data.worstAverage !== null ? Number(data.worstAverage).toFixed(2) : "-") + '</strong></p>'
-          + '</div></div>'
-
-          + '<div class="decision-box" style="border-color: ' + decisionColor + '; color: ' + decisionColor + ';">'
-          + 'Appréciation du conseil de classe : ' + decisionText
-          + '</div>'
-
-          + '<div class="signatures-row">'
-          + '<div class="sig-block"><span class="sig-title">Le Titulaire</span></div>'
-          + '<div class="sig-block"><span class="sig-title">Le Parent</span></div>'
-          + '<div class="sig-block"><span class="sig-title">Le Chef d\'Établissement</span>'
-          + signatureMarkup + stampMarkup
-          + '</div></div>'
-
-          + '<div class="disclaimer">'
-          + escapeHtml(data.establishment?.city ?? "") + ', le ' + new Date().toLocaleDateString("fr-FR") + ' — Toute surcharge rend ce bulletin sans valeur.'
-          + '</div></div></div>';
+          + '<table class="decision-signature"><tbody><tr>'
+          + '<td style="width: 50%;">'
+          + '<div class="decision-title">Appréciation du conseil de classe</div>'
+          + '<div class="decision-box">' + escapeHtml(decisionText) + '</div>'
+          + '</td>'
+          + '<td class="official-signature">'
+          + '<div class="city-line">' + escapeHtml(cityName) + ', le ' + reportDate + '</div>'
+          + '<span class="sig-title">' + escapeHtml(signerTitle) + '</span>'
+          + signatureMarkup + stampMarkup + signerNameMarkup
+          + '<div class="disclaimer">Toute surcharge rend ce bulletin sans valeur.</div>'
+          + '</td>'
+          + '</tr></tbody></table>'
+          + '<div class="bank-line">Compte Bancaire : N° F</div>'
+          + '</div>';
       }
 
       html += '</body></html>';
@@ -3310,6 +3420,83 @@ export function SchoolDashboard({
                           {settingsForm.reportCardColor || "#1e3a8a"} — en-tête et bordures du bulletin
                         </span>
                       </div>
+                    </label>
+                    <div className="section-title field full">
+                      <strong>Modele de bulletin</strong>
+                      <span>Entete officielle, titre et signature de direction</span>
+                    </div>
+                    <label className="field">
+                      <span className="required">Titre du bulletin</span>
+                      <input
+                        disabled={!selected}
+                        required
+                        maxLength={80}
+                        placeholder="Exemple : BULLETIN DE NOTES"
+                        value={settingsForm.reportCardTitle}
+                        onChange={(event) =>
+                          setSettingsForm({ ...settingsForm, reportCardTitle: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="required">Signataire officiel</span>
+                      <input
+                        disabled={!selected}
+                        required
+                        maxLength={80}
+                        placeholder="Exemple : Le Chef d'Etablissement ou Le Censeur"
+                        value={settingsForm.reportCardSignerTitle}
+                        onChange={(event) =>
+                          setSettingsForm({ ...settingsForm, reportCardSignerTitle: event.target.value })
+                        }
+                      />
+                      <small>Le parent ne signe pas le bulletin.</small>
+                    </label>
+                    <label className="field full">
+                      <span>Nom du signataire</span>
+                      <input
+                        disabled={!selected}
+                        maxLength={120}
+                        placeholder="Exemple : M. Ouedraogo Moussa"
+                        value={settingsForm.reportCardSignerName}
+                        onChange={(event) =>
+                          setSettingsForm({ ...settingsForm, reportCardSignerName: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Entete gauche</span>
+                      <textarea
+                        disabled={!selected}
+                        placeholder={"LYCEE PRIVE MB (MOHAMED BOUAZIZI)\n03 BP 4177 BOBO DIOULASSO 03\nTel : +226 69 00 95 95"}
+                        value={settingsForm.reportCardHeaderLeft}
+                        onChange={(event) =>
+                          setSettingsForm({ ...settingsForm, reportCardHeaderLeft: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Entete centre</span>
+                      <textarea
+                        disabled={!selected}
+                        placeholder={"Texte central facultatif sous le logo"}
+                        value={settingsForm.reportCardHeaderCenter}
+                        onChange={(event) =>
+                          setSettingsForm({ ...settingsForm, reportCardHeaderCenter: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field full">
+                      <span>Entete droite</span>
+                      <textarea
+                        disabled={!selected}
+                        placeholder={"FRANCS CFA"}
+                        value={settingsForm.reportCardHeaderRight}
+                        onChange={(event) =>
+                          setSettingsForm({ ...settingsForm, reportCardHeaderRight: event.target.value })
+                        }
+                      />
+                      <small>Laissez vide pour afficher automatiquement FRANCS CFA avec la devise XOF.</small>
                     </label>
                     <div className="section-title field full">
                       <strong>Matricule automatique</strong>
