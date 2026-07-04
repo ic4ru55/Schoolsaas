@@ -261,6 +261,72 @@ const navGroups = [
   }
 ] as const;
 
+const VIEW_MODULES: Partial<Record<AppView, string[]>> = {
+  settings: ["establishment", "academic_years"],
+  students: ["students", "guardians"],
+  documents: ["students"],
+  teachers: ["teachers"],
+  structure: ["classes", "subjects"],
+  payments: ["payments"],
+  grades: ["grades"],
+  imports: ["imports"],
+  backups: ["backups"],
+  roles: ["users"],
+  "audit-logs": ["users"]
+};
+
+function currentLicense(establishment?: Establishment | null) {
+  return establishment?.licenses?.[0] ?? null;
+}
+
+function licenseStatus(establishment?: Establishment | null) {
+  const license = currentLicense(establishment);
+  if (!license) {
+    return "NO_LICENSE";
+  }
+
+  if (
+    (license.status === "TRIAL" || license.status === "ACTIVE") &&
+    license.expiresAt &&
+    new Date(license.expiresAt).getTime() < Date.now()
+  ) {
+    return "EXPIRED";
+  }
+
+  return license.status;
+}
+
+function isLicenseBlocked(establishment?: Establishment | null) {
+  return ["NO_LICENSE", "EXPIRED", "SUSPENDED"].includes(licenseStatus(establishment));
+}
+
+function isModuleEnabled(establishment: Establishment | null, moduleCode: string) {
+  return establishment?.modules?.some((module) => module.moduleCode === moduleCode && module.enabled) ?? false;
+}
+
+function isViewEnabledForEstablishment(view: AppView, establishment: Establishment | null) {
+  if (view === "dashboard" || view === "settings") {
+    return true;
+  }
+
+  if (isLicenseBlocked(establishment)) {
+    return false;
+  }
+
+  const modules = VIEW_MODULES[view];
+  if (!modules?.length) {
+    return true;
+  }
+
+  return modules.some((moduleCode) => isModuleEnabled(establishment, moduleCode));
+}
+
+function addMonthsInput(months: number) {
+  const date = new Date();
+  date.setMonth(date.getMonth() + months);
+  return date.toISOString().slice(0, 10);
+}
+
 
 const documentTypes = [
   { label: "Acte de naissance", value: "BIRTH_CERTIFICATE" },
@@ -303,12 +369,12 @@ type EstablishmentAssetType = (typeof establishmentAssets)[number]["assetType"];
 const allowedIdentityImageTypes = ["image/jpeg", "image/png", "image/webp"];
 
 const moduleCards = [
-  ["Scolarite", "Eleves, parents, classes"],
-  ["Finance", "Tranches, recus, restes"],
-  ["Pedagogie", "Notes, moyennes, bulletins"],
-  ["Documents", "PDF imprimables"],
-  ["Imports", "Excel et CSV"],
-  ["Securite", "Roles et journal"]
+  { title: "Scolarite", detail: "Eleves, parents, classes", codes: ["students", "guardians", "classes"] },
+  { title: "Finance", detail: "Tranches, recus, restes", codes: ["payments"] },
+  { title: "Pedagogie", detail: "Notes, moyennes, bulletins", codes: ["grades"] },
+  { title: "Documents", detail: "PDF imprimables", codes: ["students"] },
+  { title: "Imports", detail: "Excel et CSV", codes: ["imports"] },
+  { title: "Securite", detail: "Roles et journal", codes: ["users"] }
 ];
 
 const defaultMetrics = {
@@ -656,8 +722,8 @@ export function SchoolDashboard({
     };
 
     const required = permMap[view];
-    if (!required || required.length === 0) return true;
-    return required.some(p => currentUser.permissions.includes(p));
+    const permissionAllowed = !required || required.length === 0 || required.some((permission) => hasPermission(permission));
+    return permissionAllowed && isViewEnabledForEstablishment(view, selected);
   };
 
   const [structureTab, setStructureTab] = useState<StructureTab>("levels");
@@ -983,6 +1049,14 @@ export function SchoolDashboard({
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!mounted || hasAccessToView(activeView)) {
+      return;
+    }
+
+    setActiveView("dashboard");
+  }, [activeView, mounted, selected, currentUser.permissions, currentUser.roleCode]);
 
   useEffect(() => {
     if (!mounted) {
@@ -3101,6 +3175,11 @@ export function SchoolDashboard({
     printWindow.document.close();
   }
 
+  const selectedLicense = currentLicense(selected);
+  const selectedLicenseStatus = licenseStatus(selected);
+  const selectedLicenseBlocked =
+    currentUser.roleCode !== "platform_super_admin" && Boolean(selected) && isLicenseBlocked(selected);
+
   if (!mounted) {
     return <DashboardLoadingShell />;
   }
@@ -3249,6 +3328,19 @@ export function SchoolDashboard({
             </div>
           </div>
         </header>
+
+        {selectedLicenseBlocked ? (
+          <div className="inline-alerts" style={{ marginBottom: "14px" }}>
+            <div className="alert-item">
+              <Lock size={16} />
+              <span>
+                Licence {selectedLicenseStatus === "SUSPENDED" ? "suspendue" : "expiree"} : les modules de
+                travail sont verrouilles pour cet etablissement.
+                {selectedLicense?.expiresAt ? ` Expiration : ${formatDate(selectedLicense.expiresAt)}.` : ""}
+              </span>
+            </div>
+          </div>
+        ) : null}
 
         <div className={activeView === "dashboard" ? "dashboard-grid" : "dashboard-grid full-width"}>
           <section>
@@ -6153,10 +6245,12 @@ export function SchoolDashboard({
                 </button>
               </div>
               <div className="module-grid">
-                {moduleCards.map(([title, detail]) => (
-                  <div className="module-card" key={title}>
-                    <strong>{title}</strong>
-                    <span>{detail}</span>
+                {moduleCards
+                  .filter((module) => !selected || module.codes.some((code) => isModuleEnabled(selected, code)))
+                  .map((module) => (
+                  <div className="module-card" key={module.title}>
+                    <strong>{module.title}</strong>
+                    <span>{module.detail}</span>
                   </div>
                 ))}
               </div>
@@ -7645,7 +7739,13 @@ function SuperAdminPanel({
   const [selectedEstab, setSelectedEstab] = useState<Establishment | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [alert, setAlert] = useState<string>("");
-  const [licenseForm, setLicenseForm] = useState({ planCode: "", status: "", expiresAt: "", maxStudents: "" });
+  const [licenseForm, setLicenseForm] = useState({
+    planCode: "",
+    status: "",
+    expiresAt: "",
+    maxStudents: "",
+    durationMonths: ""
+  });
 
   // États pour la création de compte admin d'établissement
   const [accountEstabId, setAccountEstabId] = useState("");
@@ -7658,6 +7758,28 @@ function SuperAdminPanel({
   useEffect(() => {
     void loadStats();
   }, []);
+
+  useEffect(() => {
+    if (!selectedEstab) {
+      return;
+    }
+
+    const refreshed = establishments.find((establishment) => establishment.id === selectedEstab.id);
+    if (refreshed && refreshed !== selectedEstab) {
+      setSelectedEstab(refreshed);
+    }
+  }, [establishments, selectedEstab?.id]);
+
+  function fillLicenseForm(establishment: Establishment | null) {
+    const license = establishment?.licenses?.[0];
+    setLicenseForm({
+      planCode: license?.planCode ?? "",
+      status: license?.status ?? "",
+      expiresAt: toDateInput(license?.expiresAt),
+      maxStudents: license?.maxStudents ? String(license.maxStudents) : "",
+      durationMonths: ""
+    });
+  }
 
   async function loadStats() {
     setLoading(true);
@@ -7673,16 +7795,22 @@ function SuperAdminPanel({
 
   async function handleUpdateLicense() {
     if (!selectedEstab) return;
+    const durationMonths = licenseForm.durationMonths ? parseInt(licenseForm.durationMonths, 10) : undefined;
+    const maxStudents = licenseForm.maxStudents ? parseInt(licenseForm.maxStudents, 10) : undefined;
     setActionLoading(true);
     try {
-      await updateEstablishmentLicense(selectedEstab.id, {
+      const updated = await updateEstablishmentLicense(selectedEstab.id, {
         planCode: licenseForm.planCode || undefined,
         status: licenseForm.status || undefined,
         expiresAt: licenseForm.expiresAt || undefined,
-        maxStudents: licenseForm.maxStudents ? parseInt(licenseForm.maxStudents) : undefined
+        maxStudents,
+        durationMonths
       });
+      setSelectedEstab(updated);
+      fillLicenseForm(updated);
       setAlert("✅ Licence mise à jour avec succès.");
       onRefresh();
+      void loadStats();
     } catch {
       setAlert("❌ Erreur lors de la mise à jour de la licence.");
     } finally {
@@ -7706,7 +7834,8 @@ function SuperAdminPanel({
   async function handleToggleModule(establishmentId: string, moduleCode: string, enabled: boolean) {
     setActionLoading(true);
     try {
-      await toggleEstablishmentModule(establishmentId, moduleCode, enabled);
+      const updated = await toggleEstablishmentModule(establishmentId, moduleCode, enabled);
+      setSelectedEstab(updated);
       setAlert(`✅ Module ${moduleCode} ${enabled ? "activé" : "désactivé"}.`);
       onRefresh();
     } catch {
@@ -7977,12 +8106,7 @@ function SuperAdminPanel({
                       type="button"
                       onClick={() => {
                         setSelectedEstab(estab);
-                        setLicenseForm({
-                          planCode: license?.planCode ?? "",
-                          status: license?.status ?? "",
-                          expiresAt: "",
-                          maxStudents: ""
-                        });
+                        fillLicenseForm(estab);
                         setActiveTab("licenses");
                       }}
                       style={{ fontSize: "11px", padding: "4px 10px", borderRadius: "6px", border: "1px solid var(--line)", background: "transparent", cursor: "pointer" }}
@@ -8068,8 +8192,7 @@ function SuperAdminPanel({
               onChange={e => {
                 const found = establishments.find(es => es.id === e.target.value) ?? null;
                 setSelectedEstab(found);
-                const lic = found?.licenses?.[0];
-                setLicenseForm({ planCode: lic?.planCode ?? "", status: lic?.status ?? "", expiresAt: "", maxStudents: "" });
+                fillLicenseForm(found);
               }}
             >
               <option value="">-- Sélectionner un établissement --</option>
@@ -8146,6 +8269,37 @@ function SuperAdminPanel({
                 </label>
 
                 <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                  <span>Duree en mois</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={120}
+                    placeholder="Exemple : 3"
+                    value={licenseForm.durationMonths}
+                    onChange={e => {
+                      const value = e.target.value;
+                      const months = parseInt(value, 10);
+                      setLicenseForm({
+                        ...licenseForm,
+                        durationMonths: value,
+                        expiresAt: Number.isFinite(months) && months > 0 ? addMonthsInput(months) : licenseForm.expiresAt
+                      });
+                    }}
+                    style={{
+                      padding: "9px 14px",
+                      borderRadius: "8px",
+                      border: "1.5px solid #cbd5e1",
+                      background: "#f8fafc",
+                      color: "#0f172a",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      outline: "none"
+                    }}
+                  />
+                  <small style={{ color: "#64748b", fontWeight: 500 }}>Calcule automatiquement l'expiration depuis aujourd'hui.</small>
+                </label>
+
+                <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", fontWeight: 600, color: "#334155" }}>
                   <span>Date d'expiration</span>
                   <input
                     type="date"
@@ -8168,7 +8322,7 @@ function SuperAdminPanel({
                   <span>Nombre max d'élèves</span>
                   <input
                     type="number"
-                    min={0}
+                    min={1}
                     placeholder="Illimité"
                     value={licenseForm.maxStudents}
                     onChange={e => setLicenseForm({ ...licenseForm, maxStudents: e.target.value })}

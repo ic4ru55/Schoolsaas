@@ -65,6 +65,7 @@ export class EstablishmentsController {
       status?: string;
       expiresAt?: string;
       maxStudents?: number;
+      durationMonths?: number;
     }
   ) {
     return this.establishmentsService.updateLicense(id, dto);

@@ -3,7 +3,7 @@ import { createReadStream } from "fs";
 import { mkdir, stat, unlink, writeFile } from "fs/promises";
 import { extname, join } from "path";
 import { BadRequestException, Injectable, NotFoundException, StreamableFile } from "@nestjs/common";
-import { EnrollmentStatus, Prisma } from "@prisma/client";
+import { EnrollmentStatus, LicenseStatus, Prisma, StudentStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateStudentDocumentDto } from "./dto/create-student-document.dto";
 import { CreateStudentDto } from "./dto/create-student.dto";
@@ -215,6 +215,41 @@ export class StudentsService {
 
       if (dto.classId && !schoolClass) {
         throw new BadRequestException("La classe indiquee est introuvable.");
+      }
+
+      const license = await tx.license.findFirst({
+        where: { establishmentId },
+        orderBy: { createdAt: "desc" }
+      });
+
+      if (!license) {
+        throw new BadRequestException("Aucune licence active pour cet etablissement.");
+      }
+
+      if (
+        (license.status === LicenseStatus.TRIAL || license.status === LicenseStatus.ACTIVE) &&
+        license.expiresAt &&
+        license.expiresAt.getTime() < Date.now()
+      ) {
+        await tx.license.update({
+          where: { id: license.id },
+          data: { status: LicenseStatus.EXPIRED, lastCheckAt: new Date() }
+        });
+        throw new BadRequestException("La licence de cet etablissement est expiree.");
+      }
+
+      if (license.status === LicenseStatus.EXPIRED || license.status === LicenseStatus.SUSPENDED) {
+        throw new BadRequestException("La licence ne permet pas d'inscrire de nouveaux eleves.");
+      }
+
+      if (license.maxStudents !== null && license.maxStudents !== undefined) {
+        const activeStudents = await tx.student.count({
+          where: { establishmentId, status: StudentStatus.ACTIVE }
+        });
+
+        if (activeStudents >= license.maxStudents) {
+          throw new BadRequestException("Quota d'eleves atteint pour cette licence.");
+        }
       }
 
       let matricule = "";

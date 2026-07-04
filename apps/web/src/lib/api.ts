@@ -1,3 +1,20 @@
+export type EstablishmentModule = {
+  id?: string;
+  moduleCode: string;
+  enabled: boolean;
+  source?: string | null;
+};
+
+export type EstablishmentLicense = {
+  id?: string;
+  planCode: string;
+  status: "TRIAL" | "ACTIVE" | "EXPIRED" | "SUSPENDED" | string;
+  startsAt?: string;
+  expiresAt?: string | null;
+  maxStudents?: number | null;
+  lastCheckAt?: string | null;
+};
+
 export type Establishment = {
   id: string;
   name: string;
@@ -27,8 +44,8 @@ export type Establishment = {
   reportCardSignerTitle?: string | null;
   reportCardSignerName?: string | null;
   academicYears?: AcademicYear[];
-  modules?: Array<{ moduleCode: string; enabled: boolean }>;
-  licenses?: Array<{ planCode: string; status: string }>;
+  modules?: EstablishmentModule[];
+  licenses?: EstablishmentLicense[];
 };
 
 export type AcademicYear = {
@@ -1234,9 +1251,10 @@ export function updateEstablishmentLicense(
     status?: string;
     expiresAt?: string;
     maxStudents?: number;
+    durationMonths?: number;
   }
 ) {
-  return request(`/establishments/${establishmentId}/license`, {
+  return request<Establishment>(`/establishments/${establishmentId}/license`, {
     method: "PATCH",
     body: JSON.stringify(dto)
   });
@@ -1247,7 +1265,7 @@ export function toggleEstablishmentModule(
   moduleCode: string,
   enabled: boolean
 ) {
-  return request(`/establishments/${establishmentId}/modules/${moduleCode}`, {
+  return request<Establishment>(`/establishments/${establishmentId}/modules/${moduleCode}`, {
     method: "PATCH",
     body: JSON.stringify({ enabled })
   });

@@ -14,6 +14,7 @@ import {
   PERMISSIONS,
   ROLE_PERMISSION_PRESETS
 } from "@schoolsaas-bf/shared";
+import { LicenseStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateEstablishmentDto } from "./dto/create-establishment.dto";
 import { UpdateEstablishmentDto } from "./dto/update-establishment.dto";
@@ -30,6 +31,9 @@ const ASSET_MIME_BY_EXTENSION: Record<string, string> = Object.fromEntries(
 );
 const ASSET_KEYS = ["logo", "stamp", "director-signature", "cashier-signature"] as const;
 type AssetKey = (typeof ASSET_KEYS)[number];
+const DEFAULT_TRIAL_MONTHS = 1;
+const LICENSE_STATUSES = new Set<string>(["TRIAL", "ACTIVE", "EXPIRED", "SUSPENDED"]);
+const VALID_MODULE_CODES = new Set(MVP_MODULES.map((module) => module.code));
 
 function establishmentInclude() {
   return {
@@ -112,11 +116,79 @@ function assetFieldName(assetKey: AssetKey) {
   return fields[assetKey];
 }
 
+function addMonths(date: Date, months: number) {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + months);
+  return next;
+}
+
+function endOfDay(value: Date) {
+  const date = new Date(value);
+  date.setHours(23, 59, 59, 999);
+  return date;
+}
+
+function parseLicenseStatus(status?: string | null) {
+  if (!status) {
+    return undefined;
+  }
+
+  const normalized = status.trim().toUpperCase();
+  if (!LICENSE_STATUSES.has(normalized)) {
+    throw new BadRequestException("Statut de licence invalide.");
+  }
+
+  return normalized as LicenseStatus;
+}
+
+function computeExpiresAt(dto: { expiresAt?: string; durationMonths?: number }, fallback?: Date | null) {
+  if (dto.durationMonths !== undefined) {
+    if (!Number.isInteger(dto.durationMonths) || dto.durationMonths <= 0 || dto.durationMonths > 120) {
+      throw new BadRequestException("La duree de licence doit etre comprise entre 1 et 120 mois.");
+    }
+
+    return endOfDay(addMonths(new Date(), dto.durationMonths));
+  }
+
+  if (dto.expiresAt) {
+    const parsed = new Date(dto.expiresAt);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException("Date d'expiration de licence invalide.");
+    }
+
+    return endOfDay(parsed);
+  }
+
+  return fallback ?? null;
+}
+
+function effectiveStatus(status: LicenseStatus, expiresAt?: Date | null) {
+  if ((status === "TRIAL" || status === "ACTIVE") && expiresAt && expiresAt.getTime() < Date.now()) {
+    return LicenseStatus.EXPIRED;
+  }
+
+  return status;
+}
+
 @Injectable()
 export class EstablishmentsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll() {
+  async syncExpiredLicenses() {
+    await this.prisma.license.updateMany({
+      where: {
+        status: { in: [LicenseStatus.TRIAL, LicenseStatus.ACTIVE] },
+        expiresAt: { lt: new Date() }
+      },
+      data: {
+        status: LicenseStatus.EXPIRED,
+        lastCheckAt: new Date()
+      }
+    });
+  }
+
+  async findAll() {
+    await this.syncExpiredLicenses();
     return this.prisma.establishment.findMany({
       orderBy: { createdAt: "desc" },
       include: establishmentInclude()
@@ -124,6 +196,7 @@ export class EstablishmentsService {
   }
 
   async findOne(id: string) {
+    await this.syncExpiredLicenses();
     const establishment = await this.prisma.establishment.findUnique({
       where: { id },
       include: establishmentInclude()
@@ -161,7 +234,8 @@ export class EstablishmentsService {
           licenses: {
             create: {
               planCode: "trial",
-              status: "TRIAL"
+              status: "TRIAL",
+              expiresAt: endOfDay(addMonths(new Date(), DEFAULT_TRIAL_MONTHS))
             }
           },
           modules: {
@@ -323,6 +397,7 @@ export class EstablishmentsService {
    * Statistiques globales de la plateforme pour le Super Admin.
    */
   async getPlatformStats() {
+    await this.syncExpiredLicenses();
     const [
       totalEstablishments,
       trialLicenses,
@@ -367,35 +442,48 @@ export class EstablishmentsService {
       status?: string;
       expiresAt?: string;
       maxStudents?: number;
+      durationMonths?: number;
     }
   ) {
     const establishment = await this.findOne(establishmentId);
     const currentLicense = establishment.licenses[0];
+    const nextExpiresAt = computeExpiresAt(dto, currentLicense?.expiresAt);
+    const requestedStatus = parseLicenseStatus(dto.status);
+    const nextStatus = effectiveStatus(
+      requestedStatus ?? currentLicense?.status ?? LicenseStatus.TRIAL,
+      nextExpiresAt
+    );
+    const maxStudents =
+      dto.maxStudents === undefined || dto.maxStudents === null || Number.isNaN(dto.maxStudents)
+        ? currentLicense?.maxStudents ?? null
+        : dto.maxStudents;
 
     if (!currentLicense) {
       // Créer une nouvelle licence
-      return this.prisma.license.create({
+      await this.prisma.license.create({
         data: {
           establishmentId,
           planCode: dto.planCode ?? "trial",
-          status: (dto.status as any) ?? "TRIAL",
-          expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : undefined,
-          maxStudents: dto.maxStudents
+          status: nextStatus,
+          expiresAt: nextExpiresAt,
+          maxStudents
         }
       });
+      return this.findOne(establishmentId);
     }
 
     // Mettre à jour la licence existante
-    return this.prisma.license.update({
+    await this.prisma.license.update({
       where: { id: currentLicense.id },
       data: {
         planCode: dto.planCode ?? currentLicense.planCode,
-        status: (dto.status as any) ?? currentLicense.status,
-        expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : currentLicense.expiresAt,
-        maxStudents: dto.maxStudents ?? currentLicense.maxStudents,
+        status: nextStatus,
+        expiresAt: nextExpiresAt,
+        maxStudents,
         lastCheckAt: new Date()
       }
     });
+    return this.findOne(establishmentId);
   }
 
   /**
@@ -403,8 +491,11 @@ export class EstablishmentsService {
    */
   async toggleModule(establishmentId: string, moduleCode: string, enabled: boolean) {
     await this.findOne(establishmentId);
+    if (!VALID_MODULE_CODES.has(moduleCode as any)) {
+      throw new BadRequestException("Module inconnu.");
+    }
 
-    return this.prisma.enabledModule.upsert({
+    await this.prisma.enabledModule.upsert({
       where: { establishmentId_moduleCode: { establishmentId, moduleCode } },
       create: {
         establishmentId,
@@ -412,8 +503,9 @@ export class EstablishmentsService {
         enabled,
         source: "admin"
       },
-      update: { enabled }
+      update: { enabled, source: "admin" }
     });
+    return this.findOne(establishmentId);
   }
 
   /**
@@ -427,11 +519,10 @@ export class EstablishmentsService {
     if (currentLicense) {
       await this.prisma.license.update({
         where: { id: currentLicense.id },
-        data: { status: status as any, lastCheckAt: new Date() }
+        data: { status: parseLicenseStatus(status), lastCheckAt: new Date() }
       });
     }
 
-    return { success: true, establishmentId, status, reason };
+    return { success: true, establishment: await this.findOne(establishmentId), status, reason };
   }
 }
-
