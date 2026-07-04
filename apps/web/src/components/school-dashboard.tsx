@@ -39,7 +39,15 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
-  Filter
+  Filter,
+  X,
+  AlertCircle,
+  CheckCircle,
+  Layers,
+  GripVertical,
+  ChevronDown,
+  Wand2,
+  Flame
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
@@ -121,10 +129,19 @@ import {
   getAllAuditLogs,
   getEstablishmentAuditLogs,
   getAuditLogStats,
+  purgeAuditLogs,
   AuditLog,
   PaginatedAuditLogs,
   AuditLogStats,
-  PlatformStats
+  PlatformStats,
+  GradingTemplate,
+  GradingSlot,
+  CreateGradingTemplateDto,
+  getGradingTemplates,
+  createGradingTemplate,
+  updateGradingTemplate,
+  deleteGradingTemplate,
+  applyGradingTemplate
 } from "../lib/api";
 
 type AppView =
@@ -140,7 +157,16 @@ type AppView =
   | "backups"
   | "roles"
   | "super-admin"
-  | "audit-logs";
+  | "audit-logs"
+  | "grading-templates";
+
+type ConfirmDialog = {
+  open: boolean;
+  title: string;
+  message: string;
+  variant?: "danger" | "warning" | "info";
+  onConfirm: () => void;
+};
 
 type StructureTab = "levels" | "subjects" | "classes" | "coefficients";
 type PaymentTab = "fees" | "collect" | "receipts";
@@ -242,6 +268,7 @@ const navGroups = [
     items: [
       { label: "Paiements", icon: Banknote, view: "payments", submenu: paymentTabs },
       { label: "Notes", icon: BookOpen, view: "grades" },
+      { label: "Baremes", icon: Layers, view: "grading-templates" },
       { label: "Imports", icon: FileSpreadsheet, view: "imports" }
     ]
   },
@@ -269,6 +296,7 @@ const VIEW_MODULES: Partial<Record<AppView, string[]>> = {
   structure: ["classes", "subjects"],
   payments: ["payments"],
   grades: ["grades"],
+  "grading-templates": ["grades"],
   imports: ["imports"],
   backups: ["backups"],
   roles: ["users"],
@@ -901,6 +929,50 @@ export function SchoolDashboard({
     weight: "1"
   });
 
+  // ── Boîte de dialogue de confirmation personnalisée ─────────────────────────
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialog>({
+    open: false,
+    title: "",
+    message: "",
+    variant: "danger",
+    onConfirm: () => {}
+  });
+
+  function openConfirm(opts: Omit<ConfirmDialog, "open">) {
+    setConfirmDialog({ ...opts, open: true });
+  }
+
+  function closeConfirm() {
+    setConfirmDialog((prev) => ({ ...prev, open: false }));
+  }
+
+  // ── Moteur de barème ────────────────────────────────────────────────────────
+  const [gradingTemplates, setGradingTemplates] = useState<GradingTemplate[]>([]);
+  const [gradingTemplatesLoading, setGradingTemplatesLoading] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<GradingTemplate | null>(null);
+  const [templateForm, setTemplateForm] = useState<{
+    periodType: string;
+    name: string;
+    description: string;
+    isDefault: boolean;
+    slots: Array<{ label: string; code: string; weight: string; maxScore: string; mandatory: boolean }>;
+  }>({
+    periodType: "TRIMESTER",
+    name: "",
+    description: "",
+    isDefault: false,
+    slots: [
+      { label: "Devoir 1", code: "D1", weight: "1", maxScore: "20", mandatory: true },
+      { label: "Devoir 2", code: "D2", weight: "1", maxScore: "20", mandatory: true },
+      { label: "Composition", code: "C", weight: "2", maxScore: "20", mandatory: true }
+    ]
+  });
+  const [showTemplateForm, setShowTemplateForm] = useState(false);
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [applyTemplateId, setApplyTemplateId] = useState("");
+  const [applyPeriodId, setApplyPeriodId] = useState("");
+  const [applyingTemplate, setApplyingTemplate] = useState(false);
+
   const selected = useMemo(
     () => establishments.find((item) => item.id === selectedId) ?? null,
     [establishments, selectedId]
@@ -1102,6 +1174,13 @@ export function SchoolDashboard({
     }
     void loadUsers(selectedId);
     void loadRoles(selectedId);
+  }, [activeView, selectedId]);
+
+  useEffect(() => {
+    if (!selectedId || activeView !== "grading-templates") {
+      return;
+    }
+    void loadGradingTemplates(selectedId);
   }, [activeView, selectedId]);
 
   useEffect(() => {
@@ -1369,14 +1448,20 @@ export function SchoolDashboard({
 
   async function handleDeleteUser(userId: string) {
     if (!selected) return;
-    if (!confirm("Voulez-vous vraiment désactiver ce compte utilisateur ?")) return;
-    try {
-      await deleteEstablishmentUser(selected.id, userId);
-      setAlerts(["Compte utilisateur désactivé."]);
-      await loadUsers(selected.id);
-    } catch (error: any) {
-      setAlerts([errorMessage(error, "Erreur lors de la désactivation.")]);
-    }
+    openConfirm({
+      title: "Désactiver l'utilisateur",
+      message: "Voulez-vous vraiment désactiver ce compte utilisateur ? Il ne pourra plus se connecter.",
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          await deleteEstablishmentUser(selected.id, userId);
+          setAlerts(["Compte utilisateur désactivé."]);
+          await loadUsers(selected.id);
+        } catch (error: any) {
+          setAlerts([errorMessage(error, "Erreur lors de la désactivation.")]);
+        }
+      }
+    });
   }
 
   function startEditUser(user: any) {
@@ -1447,38 +1532,184 @@ export function SchoolDashboard({
 
   async function handleRestoreBackup(backupId: string) {
     if (!selected) return;
-    if (!window.confirm("⚠️ ATTENTION : La restauration va REMPLACER toutes les données actuelles de cet établissement par celles de la sauvegarde.\n\nCette action est irréversible. Continuer ?")) {
-      return;
-    }
-    setRestoringBackupId(backupId);
-    try {
-      await restoreBackup(selected.id, backupId);
-      setAlerts(["✅ Restauration terminée avec succès ! Rechargez la page pour voir les données restaurées."]);
-      // Recharger les données
-      void loadDashboard(selected.id);
-      void loadStructure(selected.id);
-      void loadStudents(selected.id);
-      void loadTeachers(selected.id);
-      void loadPayments(selected.id);
-    } catch (error) {
-      setAlerts([errorMessage(error, "Impossible de restaurer la sauvegarde.")]);
-    } finally {
-      setRestoringBackupId(null);
-    }
+    openConfirm({
+      title: "⚠️ Restauration de sauvegarde",
+      message: "ATTENTION : La restauration va REMPLACER toutes les données actuelles de cet établissement par celles de la sauvegarde.\n\nCette action est irréversible.",
+      variant: "danger",
+      onConfirm: async () => {
+        setRestoringBackupId(backupId);
+        try {
+          await restoreBackup(selected.id, backupId);
+          setAlerts(["✅ Restauration terminée avec succès ! Rechargez la page pour voir les données restaurées."]);
+          void loadDashboard(selected.id);
+          void loadStructure(selected.id);
+          void loadStudents(selected.id);
+          void loadTeachers(selected.id);
+          void loadPayments(selected.id);
+        } catch (error) {
+          setAlerts([errorMessage(error, "Impossible de restaurer la sauvegarde.")]);
+        } finally {
+          setRestoringBackupId(null);
+        }
+      }
+    });
   }
 
   async function handleDeleteBackup(backupId: string) {
     if (!selected) return;
-    if (!window.confirm("Supprimer définitivement cette sauvegarde et son fichier ?")) {
+    openConfirm({
+      title: "Supprimer la sauvegarde",
+      message: "Supprimer définitivement cette sauvegarde et son fichier ? Cette action est irréversible.",
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          await deleteBackup(selected.id, backupId);
+          await loadBackups(selected.id);
+          setAlerts(["Sauvegarde supprimée."]);
+        } catch (error) {
+          setAlerts([errorMessage(error, "Impossible de supprimer la sauvegarde.")]);
+        }
+      }
+    });
+  }
+
+  // ── Handlers barème ─────────────────────────────────────────────────────────
+
+  async function loadGradingTemplates(establishmentId: string) {
+    setGradingTemplatesLoading(true);
+    try {
+      const data = await getGradingTemplates(establishmentId);
+      setGradingTemplates(data);
+    } catch {
+      setGradingTemplates([]);
+    } finally {
+      setGradingTemplatesLoading(false);
+    }
+  }
+
+  function startNewTemplate(periodType = "TRIMESTER") {
+    const defaults: Record<string, Array<{ label: string; code: string; weight: string; maxScore: string; mandatory: boolean }>> = {
+      TRIMESTER: [
+        { label: "Devoir 1", code: "D1", weight: "1", maxScore: "20", mandatory: true },
+        { label: "Devoir 2", code: "D2", weight: "1", maxScore: "20", mandatory: true },
+        { label: "Composition", code: "C", weight: "2", maxScore: "20", mandatory: true }
+      ],
+      SEMESTER: [
+        { label: "Devoir 1", code: "D1", weight: "1", maxScore: "20", mandatory: true },
+        { label: "Devoir 2", code: "D2", weight: "1", maxScore: "20", mandatory: true },
+        { label: "Examen Semestriel", code: "EX", weight: "2", maxScore: "20", mandatory: true }
+      ],
+      ANNUAL: [
+        { label: "Evaluation Continue", code: "EC", weight: "1", maxScore: "20", mandatory: true },
+        { label: "Examen Annuel", code: "EA", weight: "3", maxScore: "20", mandatory: true }
+      ]
+    };
+    setEditingTemplate(null);
+    setTemplateForm({
+      periodType,
+      name: "",
+      description: "",
+      isDefault: false,
+      slots: defaults[periodType] ?? defaults.TRIMESTER
+    });
+    setShowTemplateForm(true);
+  }
+
+  function startEditTemplate(tpl: GradingTemplate) {
+    setEditingTemplate(tpl);
+    setTemplateForm({
+      periodType: tpl.periodType,
+      name: tpl.name,
+      description: tpl.description ?? "",
+      isDefault: tpl.isDefault,
+      slots: tpl.slots.map((s) => ({
+        label: s.label,
+        code: s.code,
+        weight: String(s.weight),
+        maxScore: String(s.maxScore),
+        mandatory: s.mandatory
+      }))
+    });
+    setShowTemplateForm(true);
+  }
+
+  async function handleSaveTemplate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    setTemplateSaving(true);
+    try {
+      const dto: CreateGradingTemplateDto = {
+        periodType: templateForm.periodType,
+        name: templateForm.name,
+        description: templateForm.description || undefined,
+        isDefault: templateForm.isDefault,
+        slots: templateForm.slots.map((s, idx) => ({
+          label: s.label,
+          code: s.code,
+          weight: parseFloat(s.weight) || 1,
+          maxScore: parseFloat(s.maxScore) || 20,
+          orderIndex: idx,
+          mandatory: s.mandatory
+        }))
+      };
+      if (editingTemplate) {
+        await updateGradingTemplate(selected.id, editingTemplate.id, dto);
+        setAlerts(["Barème mis à jour avec succès !"]);
+      } else {
+        await createGradingTemplate(selected.id, dto);
+        setAlerts(["Barème créé avec succès !"]);
+      }
+      setShowTemplateForm(false);
+      setEditingTemplate(null);
+      await loadGradingTemplates(selected.id);
+    } catch (error: any) {
+      setAlerts([errorMessage(error, "Erreur lors de la sauvegarde du barème.")]);
+    } finally {
+      setTemplateSaving(false);
+    }
+  }
+
+  function handleDeleteTemplate(tpl: GradingTemplate) {
+    if (!selected) return;
+    openConfirm({
+      title: "Supprimer le modèle de barème",
+      message: `Supprimer le modèle "${tpl.name}" ? Les périodes déjà associées conservent leurs évaluations.`,
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          await deleteGradingTemplate(selected.id, tpl.id);
+          await loadGradingTemplates(selected.id);
+          setAlerts(["Modèle de barème supprimé."]);
+        } catch (error: any) {
+          setAlerts([errorMessage(error, "Impossible de supprimer ce modèle.")]);
+        }
+      }
+    });
+  }
+
+  async function handleApplyTemplate() {
+    if (!selected || !applyTemplateId || !applyPeriodId) {
+      setAlerts(["Sélectionnez un modèle et une période."]);
       return;
     }
-    try {
-      await deleteBackup(selected.id, backupId);
-      await loadBackups(selected.id);
-      setAlerts(["Sauvegarde supprimée."]);
-    } catch (error) {
-      setAlerts([errorMessage(error, "Impossible de supprimer la sauvegarde.")]);
-    }
+    openConfirm({
+      title: "Appliquer le barème à cette période",
+      message: "Cette action va créer automatiquement les évaluations (Devoirs, Composition, etc.) pour toutes les matières de l'année active selon ce modèle. Continuer ?",
+      variant: "warning",
+      onConfirm: async () => {
+        setApplyingTemplate(true);
+        try {
+          const result = await applyGradingTemplate(selected.id, applyTemplateId, applyPeriodId);
+          setAlerts([`✅ ${result.created} évaluations créées avec succès pour cette période !`]);
+          setApplyTemplateId("");
+          setApplyPeriodId("");
+        } catch (error: any) {
+          setAlerts([errorMessage(error, "Erreur lors de l'application du barème.")]);
+        } finally {
+          setApplyingTemplate(false);
+        }
+      }
+    });
   }
 
   async function loadGrades(establishmentId: string, classId = gradeClassId, periodId = gradePeriodId) {
@@ -2340,25 +2571,24 @@ export function SchoolDashboard({
       setAlerts(["Selectionner un eleve avant de supprimer un document."]);
       return;
     }
-
-    const confirmed = window.confirm(
-      `Supprimer le document "${documentDisplayName(studentDocument)}" du dossier ?`
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    setDocumentActionId(studentDocument.id);
-    try {
-      await deleteStudentDocument(selected.id, selectedDocumentStudent.id, studentDocument.id);
-      await loadStudentDocuments(selected.id, selectedDocumentStudent.id);
-      await loadStudents(selected.id);
-      setAlerts(["Document supprime du dossier de l'eleve."]);
-    } catch (error) {
-      setAlerts([errorMessage(error, "Suppression du document impossible.")]);
-    } finally {
-      setDocumentActionId("");
-    }
+    openConfirm({
+      title: "Supprimer le document",
+      message: `Supprimer le document "${documentDisplayName(studentDocument)}" du dossier de l'élève ? Cette action est irréversible.`,
+      variant: "danger",
+      onConfirm: async () => {
+        setDocumentActionId(studentDocument.id);
+        try {
+          await deleteStudentDocument(selected.id, selectedDocumentStudent.id, studentDocument.id);
+          await loadStudentDocuments(selected.id, selectedDocumentStudent.id);
+          await loadStudents(selected.id);
+          setAlerts(["Document supprime du dossier de l'eleve."]);
+        } catch (error) {
+          setAlerts([errorMessage(error, "Suppression du document impossible.")]);
+        } finally {
+          setDocumentActionId("");
+        }
+      }
+    });
   }
 
   async function handleCreateFeeItem(event: FormEvent<HTMLFormElement>) {
@@ -2462,21 +2692,23 @@ export function SchoolDashboard({
       setAlerts(["Selectionner un etablissement avant de supprimer un frais."]);
       return;
     }
-
-    if (!window.confirm("Supprimer ce frais et ses affectations non payees ?")) {
-      return;
-    }
-
-    setPaymentSaving(true);
-    try {
-      await deleteFeeItem(selected.id, feeItemId);
-      await loadPayments(selected.id);
-      setAlerts(["Frais supprime."]);
-    } catch (error) {
-      setAlerts([errorMessage(error, "Suppression du frais impossible.")]);
-    } finally {
-      setPaymentSaving(false);
-    }
+    openConfirm({
+      title: "Supprimer le frais",
+      message: "Supprimer ce frais et toutes ses affectations non payées ? Cette action est irréversible.",
+      variant: "danger",
+      onConfirm: async () => {
+        setPaymentSaving(true);
+        try {
+          await deleteFeeItem(selected.id, feeItemId);
+          await loadPayments(selected.id);
+          setAlerts(["Frais supprime."]);
+        } catch (error) {
+          setAlerts([errorMessage(error, "Suppression du frais impossible.")]);
+        } finally {
+          setPaymentSaving(false);
+        }
+      }
+    });
   }
 
   async function handleCollectPayment(event: FormEvent<HTMLFormElement>) {
@@ -7068,6 +7300,31 @@ export function SchoolDashboard({
               />
             ) : null}
 
+            {activeView === "grading-templates" && selected ? (
+              <GradingTemplatesPanel
+                establishment={selected}
+                templates={gradingTemplates}
+                loading={gradingTemplatesLoading}
+                gradesOverview={gradesOverview}
+                showForm={showTemplateForm}
+                editingTemplate={editingTemplate}
+                templateForm={templateForm}
+                setTemplateForm={setTemplateForm}
+                templateSaving={templateSaving}
+                applyTemplateId={applyTemplateId}
+                setApplyTemplateId={setApplyTemplateId}
+                applyPeriodId={applyPeriodId}
+                setApplyPeriodId={setApplyPeriodId}
+                applyingTemplate={applyingTemplate}
+                onNew={startNewTemplate}
+                onEdit={startEditTemplate}
+                onDelete={handleDeleteTemplate}
+                onSave={handleSaveTemplate}
+                onCancel={() => { setShowTemplateForm(false); setEditingTemplate(null); }}
+                onApply={handleApplyTemplate}
+              />
+            ) : null}
+
             {activeView !== "dashboard" &&
             activeView !== "settings" &&
             activeView !== "structure" &&
@@ -7076,6 +7333,7 @@ export function SchoolDashboard({
             activeView !== "teachers" &&
             activeView !== "payments" &&
             activeView !== "grades" &&
+            activeView !== "grading-templates" &&
             activeView !== "imports" &&
             activeView !== "backups" &&
             activeView !== "roles" &&
@@ -7370,6 +7628,8 @@ export function SchoolDashboard({
           </div>
         </div>
       ) : null}
+
+      <ConfirmModal dialog={confirmDialog} onClose={closeConfirm} />
     </main>
   );
 }
@@ -8828,13 +9088,36 @@ function AuditLogsPanel({
 
         <button
           type="button"
-          className="ghost-button"
+          className="btn btn-outline"
           onClick={() => { void loadLogs(); void loadStats(); }}
           style={{ height: "auto", padding: "6px 12px", fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" }}
         >
           <RefreshCw size={13} />
           Actualiser
         </button>
+
+        {isSuperAdmin ? (
+          <button
+            type="button"
+            className="btn btn-outline color-danger"
+            onClick={async () => {
+              if (window.confirm("Purger les logs de plus de 180 jours ? (Les actions critiques seront conservées)")) {
+                try {
+                  const res = await purgeAuditLogs(180, searchEstabId || undefined);
+                  alert(`${res.deleted} log(s) ancien(s) purgé(s).`);
+                  void loadLogs();
+                  void loadStats();
+                } catch {
+                  alert("Erreur lors de la purge.");
+                }
+              }
+            }}
+            style={{ height: "auto", padding: "6px 12px", fontSize: "12px", display: "flex", alignItems: "center", gap: "4px", borderColor: "#ef4444", color: "#ef4444" }}
+          >
+            <AlertCircle size={13} />
+            Purger (&gt; 180 jours)
+          </button>
+        ) : null}
 
         <span style={{ fontSize: "12px", color: "var(--text-muted)", marginLeft: "auto" }}>
           {total} entrée(s) — page {page}/{totalPages || 1}

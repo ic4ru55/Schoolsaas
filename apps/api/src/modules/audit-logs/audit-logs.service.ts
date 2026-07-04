@@ -15,6 +15,18 @@ export interface CreateAuditLogDto {
   reason?: string | null;
 }
 
+// Actions critiques qui ne doivent jamais être purgées
+const CRITICAL_ACTIONS = [
+  "USER_DELETE",
+  "USER_DEACTIVATE",
+  "BACKUP_RESTORE",
+  "ESTABLISHMENT_DELETE",
+  "ESTABLISHMENT_SUSPEND",
+  "ROLE_PERMISSION_UPDATE",
+  "PASSWORD_RESET",
+  "LOGIN_FAILED"
+];
+
 @Injectable()
 export class AuditLogsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -51,17 +63,24 @@ export class AuditLogsService {
 
   /**
    * Retourne les logs d'un établissement (pour les admins locaux).
-   * Paginated, tri par date décroissante.
+   * Paginated, tri par date décroissante. Supporte le filtre par action.
    */
   async findByEstablishment(
     establishmentId: string,
     page = 1,
-    limit = 50
+    limit = 50,
+    action?: string
   ) {
     const skip = (page - 1) * limit;
+
+    const where: Record<string, unknown> = { establishmentId };
+    if (action) {
+      where.action = { contains: action, mode: "insensitive" };
+    }
+
     const [data, total] = await Promise.all([
       this.prisma.auditLog.findMany({
-        where: { establishmentId },
+        where,
         orderBy: { createdAt: "desc" },
         skip,
         take: limit,
@@ -71,7 +90,7 @@ export class AuditLogsService {
           }
         }
       }),
-      this.prisma.auditLog.count({ where: { establishmentId } })
+      this.prisma.auditLog.count({ where })
     ]);
 
     return { data, total, page, limit };
@@ -121,7 +140,7 @@ export class AuditLogsService {
   }
 
   /**
-   * Statistiques agrégées pour le Super Admin Dashboard
+   * Statistiques agrégées pour le Dashboard
    */
   async getStats(establishmentId?: string) {
     const where = establishmentId ? { establishmentId } : {};
@@ -151,5 +170,26 @@ export class AuditLogsService {
 
     return { total, last24h, last7d, byAction };
   }
-}
 
+  /**
+   * Purge les logs anciens (sauf les actions critiques).
+   * Réservé au Super Admin.
+   * @param olderThanDays Supprimer les logs plus anciens que N jours
+   * @param establishmentId Si défini, purge uniquement cet établissement
+   * @returns Nombre de logs supprimés
+   */
+  async purgeOldLogs(olderThanDays: number, establishmentId?: string): Promise<{ deleted: number }> {
+    const cutoffDate = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+
+    const where: Record<string, unknown> = {
+      createdAt: { lt: cutoffDate },
+      action: { notIn: CRITICAL_ACTIONS }
+    };
+    if (establishmentId) {
+      where.establishmentId = establishmentId;
+    }
+
+    const result = await this.prisma.auditLog.deleteMany({ where });
+    return { deleted: result.count };
+  }
+}

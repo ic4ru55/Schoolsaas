@@ -11,3 +11,6 @@ storage/
 *.log
 *.tsbuildinfo
 package-lock.json
+
+# Dossier de travail local (composants temporaires, brouillons)
+apps/web/src/components/scratch/

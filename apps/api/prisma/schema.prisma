@@ -223,16 +223,18 @@ model AcademicYear {
 }
 
 model Period {
-  id              String       @id @default(uuid())
-  establishmentId String
-  academicYearId  String
-  name            String
-  type            String
-  startsAt        DateTime?
-  endsAt          DateTime?
-  lockedAt        DateTime?
-  academicYear    AcademicYear @relation(fields: [academicYearId], references: [id])
-  assessments     Assessment[]
+  id                String                 @id @default(uuid())
+  establishmentId   String
+  academicYearId    String
+  name              String
+  type              String
+  startsAt          DateTime?
+  endsAt            DateTime?
+  lockedAt          DateTime?
+  gradingTemplateId String?
+  academicYear      AcademicYear           @relation(fields: [academicYearId], references: [id])
+  gradingTemplate   PeriodGradingTemplate? @relation(fields: [gradingTemplateId], references: [id])
+  assessments       Assessment[]
 
   @@index([establishmentId, academicYearId])
 }
@@ -643,3 +645,41 @@ model AuditLog {
 
   @@index([establishmentId, createdAt])
 }
+
+// ────────────────────────────────────────────────────────
+// Moteur de barème des notes
+// ────────────────────────────────────────────────────────
+
+/// Modèle d'évaluation par type de période (Trimestre, Semestre…).
+/// Un établissement peut avoir plusieurs modèles et en désigner un par défaut.
+model PeriodGradingTemplate {
+  id              String               @id @default(uuid())
+  establishmentId String
+  periodType      String               // "TRIMESTER" | "SEMESTER" | "ANNUAL"
+  name            String               // Ex: "Trimestre Standard BF"
+  description     String?
+  isDefault       Boolean              @default(false)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  slots           PeriodGradingSlot[]
+  periods         Period[]
+
+  @@index([establishmentId, periodType])
+}
+
+/// Chaque "slot" représente un type d'évaluation dans le modèle
+/// (ex. Devoir 1, Devoir 2, Composition) avec son poids et son score max.
+model PeriodGradingSlot {
+  id         String                @id @default(uuid())
+  templateId String
+  label      String                // "Devoir 1", "Composition", "Examen"
+  code       String                // "D1", "D2", "C", "EX" — référence interne
+  weight     Decimal               @default(1)
+  maxScore   Decimal               @default(20)
+  orderIndex Int                   @default(0)
+  mandatory  Boolean               @default(true)
+  template   PeriodGradingTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
+}
+

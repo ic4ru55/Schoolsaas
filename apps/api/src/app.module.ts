@@ -18,6 +18,7 @@ import { BackupsModule } from "./modules/backups/backups.module";
 import { AuthModule } from "./modules/auth/auth.module";
 import { UsersModule } from "./modules/users/users.module";
 import { AuditLogsModule } from "./modules/audit-logs/audit-logs.module";
+import { GradingTemplatesModule } from "./modules/grading-templates/grading-templates.module";
 
 @Module({
   imports: [
@@ -38,7 +39,8 @@ import { AuditLogsModule } from "./modules/audit-logs/audit-logs.module";
     ImportsModule,
     BackupsModule,
     AuthModule,
-    UsersModule
+    UsersModule,
+    GradingTemplatesModule
   ],
   controllers: [AppController]
 })

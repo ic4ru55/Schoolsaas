@@ -1336,14 +1336,19 @@ export function getAllAuditLogs(params?: {
   return request<PaginatedAuditLogs>(`/audit-logs?${qs.toString()}`);
 }
 
-/** Admin local — Logs de son propre établissement */
+/** Admin local — Logs de son propre établissement, avec filtre action */
 export function getEstablishmentAuditLogs(
   establishmentId: string,
   page = 1,
-  limit = 50
+  limit = 50,
+  action?: string
 ) {
+  const qs = new URLSearchParams();
+  qs.set("page", String(page));
+  qs.set("limit", String(limit));
+  if (action) qs.set("action", action);
   return request<PaginatedAuditLogs>(
-    `/audit-logs/establishments/${establishmentId}?page=${page}&limit=${limit}`
+    `/audit-logs/establishments/${establishmentId}?${qs.toString()}`
   );
 }
 
@@ -1351,4 +1356,110 @@ export function getEstablishmentAuditLogs(
 export function getAuditLogStats(establishmentId?: string) {
   const qs = establishmentId ? `?establishmentId=${establishmentId}` : "";
   return request<AuditLogStats>(`/audit-logs/stats${qs}`);
+}
+
+/** Super Admin — Purger les logs plus anciens que N jours (préserve les actions critiques) */
+export function purgeAuditLogs(olderThanDays: number, establishmentId?: string) {
+  return request<{ deleted: number }>("/audit-logs/purge", {
+    method: "DELETE",
+    body: JSON.stringify({ olderThanDays, establishmentId })
+  });
+}
+
+// ────────────────────────────────────────────────
+// MOTEUR DE BARÈME DES NOTES — API Fonctions
+// ────────────────────────────────────────────────
+
+export type GradingSlot = {
+  id: string;
+  templateId: string;
+  label: string;
+  code: string;
+  weight: number | string;
+  maxScore: number | string;
+  orderIndex: number;
+  mandatory: boolean;
+};
+
+export type GradingTemplate = {
+  id: string;
+  establishmentId: string;
+  periodType: string;
+  name: string;
+  description?: string | null;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+  slots: GradingSlot[];
+  periods?: Array<{ id: string; name: string; type: string }>;
+};
+
+export type CreateGradingTemplateDto = {
+  periodType: string;
+  name: string;
+  description?: string;
+  isDefault?: boolean;
+  slots: {
+    label: string;
+    code: string;
+    weight: number;
+    maxScore: number;
+    orderIndex: number;
+    mandatory?: boolean;
+  }[];
+};
+
+export type UpdateGradingTemplateDto = Partial<CreateGradingTemplateDto>;
+
+/** Lister tous les modèles de barème d'un établissement */
+export function getGradingTemplates(establishmentId: string) {
+  return request<GradingTemplate[]>(
+    `/establishments/${establishmentId}/grading-templates`
+  );
+}
+
+/** Créer un modèle de barème */
+export function createGradingTemplate(
+  establishmentId: string,
+  dto: CreateGradingTemplateDto
+) {
+  return request<GradingTemplate>(
+    `/establishments/${establishmentId}/grading-templates`,
+    { method: "POST", body: JSON.stringify(dto) }
+  );
+}
+
+/** Modifier un modèle de barème */
+export function updateGradingTemplate(
+  establishmentId: string,
+  templateId: string,
+  dto: UpdateGradingTemplateDto
+) {
+  return request<GradingTemplate>(
+    `/establishments/${establishmentId}/grading-templates/${templateId}`,
+    { method: "PATCH", body: JSON.stringify(dto) }
+  );
+}
+
+/** Supprimer un modèle de barème */
+export function deleteGradingTemplate(
+  establishmentId: string,
+  templateId: string
+) {
+  return request<{ deleted: boolean }>(
+    `/establishments/${establishmentId}/grading-templates/${templateId}`,
+    { method: "DELETE" }
+  );
+}
+
+/** Appliquer un modèle à une période (crée les évaluations automatiquement) */
+export function applyGradingTemplate(
+  establishmentId: string,
+  templateId: string,
+  periodId: string
+) {
+  return request<{ created: number; templateId: string; periodId: string }>(
+    `/establishments/${establishmentId}/grading-templates/${templateId}/apply-to-period/${periodId}`,
+    { method: "POST" }
+  );
 }
