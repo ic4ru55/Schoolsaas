@@ -247,6 +247,14 @@ Resultat attendu :
 
 - l'etablissement peut imprimer les bulletins d'une classe.
 
+Etat actuel :
+
+- creation des periodes de notes : ajoutee ;
+- creation des evaluations par classe/matiere : ajoutee ;
+- saisie et correction des notes par eleve : ajoutee ;
+- historique des corrections de notes : ajoute ;
+- calcul des moyennes, rangs et bulletins PDF : a faire.
+
 ## Etape 6 - Import Excel
 
 Objectif : recuperer les anciennes donnees.

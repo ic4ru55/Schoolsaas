@@ -314,4 +314,124 @@ export class EstablishmentsService {
       length: fileStats.size
     });
   }
+
+  // ────────────────────────────────────────────────
+  // SUPER ADMIN — Méthodes de gestion globale
+  // ────────────────────────────────────────────────
+
+  /**
+   * Statistiques globales de la plateforme pour le Super Admin.
+   */
+  async getPlatformStats() {
+    const [
+      totalEstablishments,
+      trialLicenses,
+      activeLicenses,
+      expiredLicenses,
+      suspendedLicenses,
+      totalStudents,
+      totalUsers,
+      recentBackups
+    ] = await Promise.all([
+      this.prisma.establishment.count(),
+      this.prisma.license.count({ where: { status: "TRIAL" } }),
+      this.prisma.license.count({ where: { status: "ACTIVE" } }),
+      this.prisma.license.count({ where: { status: "EXPIRED" } }),
+      this.prisma.license.count({ where: { status: "SUSPENDED" } }),
+      this.prisma.student.count(),
+      this.prisma.user.count(),
+      this.prisma.backupJob.count({
+        where: {
+          status: "SUCCESS",
+          startedAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
+        }
+      })
+    ]);
+
+    return {
+      totalEstablishments,
+      licenses: { trial: trialLicenses, active: activeLicenses, expired: expiredLicenses, suspended: suspendedLicenses },
+      totalStudents,
+      totalUsers,
+      recentBackupsThisWeek: recentBackups
+    };
+  }
+
+  /**
+   * Mise à jour de la licence d'un établissement (Super Admin).
+   */
+  async updateLicense(
+    establishmentId: string,
+    dto: {
+      planCode?: string;
+      status?: string;
+      expiresAt?: string;
+      maxStudents?: number;
+    }
+  ) {
+    const establishment = await this.findOne(establishmentId);
+    const currentLicense = establishment.licenses[0];
+
+    if (!currentLicense) {
+      // Créer une nouvelle licence
+      return this.prisma.license.create({
+        data: {
+          establishmentId,
+          planCode: dto.planCode ?? "trial",
+          status: (dto.status as any) ?? "TRIAL",
+          expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : undefined,
+          maxStudents: dto.maxStudents
+        }
+      });
+    }
+
+    // Mettre à jour la licence existante
+    return this.prisma.license.update({
+      where: { id: currentLicense.id },
+      data: {
+        planCode: dto.planCode ?? currentLicense.planCode,
+        status: (dto.status as any) ?? currentLicense.status,
+        expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : currentLicense.expiresAt,
+        maxStudents: dto.maxStudents ?? currentLicense.maxStudents,
+        lastCheckAt: new Date()
+      }
+    });
+  }
+
+  /**
+   * Active ou désactive un module pour un établissement (Super Admin).
+   */
+  async toggleModule(establishmentId: string, moduleCode: string, enabled: boolean) {
+    await this.findOne(establishmentId);
+
+    return this.prisma.enabledModule.upsert({
+      where: { establishmentId_moduleCode: { establishmentId, moduleCode } },
+      create: {
+        establishmentId,
+        moduleCode,
+        enabled,
+        source: "admin"
+      },
+      update: { enabled }
+    });
+  }
+
+  /**
+   * Change le statut de la licence principale d'un établissement.
+   * Utilisé pour suspendre ou réactiver un accès.
+   */
+  async updateStatus(establishmentId: string, status: string, reason?: string) {
+    const establishment = await this.findOne(establishmentId);
+    const currentLicense = establishment.licenses[0];
+
+    if (currentLicense) {
+      await this.prisma.license.update({
+        where: { id: currentLicense.id },
+        data: { status: status as any, lastCheckAt: new Date() }
+      });
+    }
+
+    return { success: true, establishmentId, status, reason };
+  }
 }
+

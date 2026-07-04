@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Activity,
   AlertTriangle,
   Banknote,
   BookOpen,
@@ -8,23 +9,37 @@ import {
   CalendarDays,
   CheckCircle2,
   CloudUpload,
+  Crown,
   Download,
   Eye,
   FileSpreadsheet,
   FileText,
+  Globe,
   GraduationCap,
+  History,
   LayoutDashboard,
   LibraryBig,
   Loader2,
+  Lock,
   PlayCircle,
   Plus,
+  Power,
   ReceiptText,
   Save,
   Settings,
   ShieldCheck,
   Printer,
   Trash2,
-  Users
+  TrendingUp,
+  ToggleLeft,
+  ToggleRight,
+  Users,
+  UserPlus,
+  Database,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  Filter
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
@@ -35,10 +50,12 @@ import {
   assignSubjectToClass,
   assignFeeItem,
   collectPayment,
+  createAssessment,
   createClass,
   createAcademicYear,
   createEstablishment,
   createFeeItem,
+  createGradePeriod,
   createLevel,
   createStudent,
   createSubject,
@@ -49,6 +66,7 @@ import {
   getClasses,
   getDashboard,
   getEstablishments,
+  getGradesOverview,
   getLevels,
   getPaymentsOverview,
   getStudentDossier,
@@ -58,6 +76,8 @@ import {
   getSubjects,
   getTeachers,
   Level,
+  GradeAssessment,
+  GradesOverview,
   SchoolClass,
   Student,
   StudentDossier,
@@ -72,7 +92,39 @@ import {
   updateFeeItem,
   updateEstablishment,
   updateStudent,
-  updateTeacher
+  updateTeacher,
+  saveGrades,
+  getReportCard,
+  ReportCardData,
+  getImportJobs,
+  startStudentImport,
+  ImportJobRecord,
+  getBackups,
+  startBackup,
+  backupDownloadUrl,
+  restoreBackup,
+  deleteBackup,
+  BackupJob,
+  AuthUser,
+  getEstablishmentUsers,
+  getEstablishmentRoles,
+  updateRolePermissions,
+  createEstablishmentUser,
+  updateEstablishmentUser,
+  deleteEstablishmentUser,
+  changePassword,
+
+  getPlatformStats,
+  updateEstablishmentLicense,
+  toggleEstablishmentModule,
+  updateEstablishmentStatus,
+  getAllAuditLogs,
+  getEstablishmentAuditLogs,
+  getAuditLogStats,
+  AuditLog,
+  PaginatedAuditLogs,
+  AuditLogStats,
+  PlatformStats
 } from "../lib/api";
 
 type AppView =
@@ -86,7 +138,9 @@ type AppView =
   | "grades"
   | "imports"
   | "backups"
-  | "roles";
+  | "roles"
+  | "super-admin"
+  | "audit-logs";
 
 type StructureTab = "levels" | "subjects" | "classes" | "coefficients";
 type PaymentTab = "fees" | "collect" | "receipts";
@@ -195,10 +249,18 @@ const navGroups = [
     label: "Administration",
     items: [
       { label: "Sauvegardes", icon: CloudUpload, view: "backups" },
-      { label: "Roles", icon: ShieldCheck, view: "roles" }
+      { label: "Roles", icon: ShieldCheck, view: "roles" },
+      { label: "Journal d'activite", icon: History, view: "audit-logs" }
+    ]
+  },
+  {
+    label: "Super Admin Plateforme",
+    items: [
+      { label: "Gestion globale", icon: Crown, view: "super-admin" }
     ]
   }
 ] as const;
+
 
 const documentTypes = [
   { label: "Acte de naissance", value: "BIRTH_CERTIFICATE" },
@@ -399,9 +461,147 @@ function previewStudentMatricule(establishment: Establishment | null, activeYear
     .replace(/\{SEQ\}/g, sequence);
 }
 
-export function SchoolDashboard() {
+function getFriendlyRoleName(roleCode: string) {
+  if (roleCode === "platform_super_admin") return "Super Admin Plateforme";
+  if (roleCode === "admin") return "Admin établissement";
+  return roleCode
+    .replace(/[_-]/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+const PERMISSION_GROUPS = [
+  {
+    category: "Tableau de Bord",
+    permissions: [
+      { code: "dashboard.read", label: "Voir le tableau de bord", description: "Accès à la synthèse globale de l'école et aux statistiques de fréquentation et financières." }
+    ]
+  },
+  {
+    category: "Configuration générale",
+    permissions: [
+      { code: "establishment.manage", label: "Gérer l'établissement", description: "Modifier le logo, les informations de contact, les signatures et configurer les paramètres de l'école." },
+      { code: "academic_years.manage", label: "Gérer les années scolaires", description: "Créer, configurer et activer les années scolaires." }
+    ]
+  },
+  {
+    category: "Gestion des élèves",
+    permissions: [
+      { code: "students.read", label: "Consulter les élèves", description: "Accès à la liste des élèves, recherche et consultation des dossiers." },
+      { code: "students.manage", label: "Gérer les fiches d'élèves", description: "Créer, modifier, suspendre ou exclure des élèves." },
+      { code: "guardians.manage", label: "Gérer les parents/tuteurs", description: "Associer, modifier ou créer les fiches des tuteurs légaux." }
+    ]
+  },
+  {
+    category: "Structure & Enseignement",
+    permissions: [
+      { code: "classes.manage", label: "Gérer les classes", description: "Créer, modifier les classes et affecter les professeurs principaux." },
+      { code: "subjects.manage", label: "Gérer les matières", description: "Ajouter des matières à l'établissement, configurer les coefficients par classe." },
+      { code: "teachers.manage", label: "Gérer les enseignants", description: "Ajouter des enseignants à l'établissement et configurer leurs fiches." }
+    ]
+  },
+  {
+    category: "Comptabilité & Scolarité",
+    permissions: [
+      { code: "payments.read", label: "Consulter les finances", description: "Visualiser les indicateurs de paiement, les impayés et l'historique général." },
+      { code: "payments.manage", label: "Gérer la facturation et encaisser", description: "Définir les frais obligatoires par classe et saisir les paiements reçus (génère des reçus)." }
+    ]
+  },
+  {
+    category: "Notes & Bulletins",
+    permissions: [
+      { code: "grades.read", label: "Consulter les notes", description: "Visualiser la grille des notes par classe et par élève." },
+      { code: "grades.enter", label: "Saisir les notes d'évaluation", description: "Permet de créer des évaluations et d'entrer les notes obtenues par les élèves." },
+      { code: "grades.validate", label: "Valider les périodes", description: "Valider ou clôturer officiellement les notes d'un trimestre/semestre." },
+      { code: "report_cards.generate", label: "Calculer & Générer les bulletins", description: "Générer les bulletins officiels PDF de l'établissement." }
+    ]
+  },
+  {
+    category: "Outils & Sécurité locale",
+    permissions: [
+      { code: "imports.manage", label: "Importations de données", description: "Importer des élèves par fichier Excel/CSV." },
+      { code: "backups.manage", label: "Gestion des sauvegardes", description: "Lancer des sauvegardes manuelles de la base et restaurer l'état de l'application." },
+      { code: "users.manage", label: "Gérer les accès et rôles", description: "Créer des comptes d'utilisateurs locaux (secrétaire, comptable...) et modifier les droits d'accès." },
+      { code: "audit_logs.read", label: "Consulter le journal d'audit", description: "Permet de voir qui a fait quoi sur l'application locale (sécurité)." }
+    ]
+  }
+];
+
+export function SchoolDashboard({
+  currentUser,
+  onLogout
+}: {
+  currentUser: AuthUser;
+  onLogout: () => void;
+}) {
   const [mounted, setMounted] = useState(false);
-  const [activeView, setActiveView] = useState<AppView>("dashboard");
+  // Le Super Admin commence toujours sur la vue de gestion globale
+  const [activeView, setActiveView] = useState<AppView>(
+    currentUser.roleCode === "platform_super_admin" ? "super-admin" : "dashboard"
+  );
+  
+  const hasPermission = (permission: string): boolean => {
+    if (currentUser.roleCode === "platform_super_admin") return true;
+    if (currentUser.roleCode === "admin") return true;
+    return currentUser.permissions.includes(permission);
+  };
+
+  
+  // États de gestion des utilisateurs locaux
+  const [usersList, setUsersList] = useState<any[]>([]);
+  const [rolesList, setRolesList] = useState<any[]>([]);
+  const [userSaving, setUserSaving] = useState(false);
+  const [editingUser, setEditingUser] = useState<any | null>(null);
+  const [userForm, setUserForm] = useState({
+    fullName: "",
+    email: "",
+    password: "",
+    phone: "",
+    roleId: ""
+  });
+
+  // États de personnalisation des permissions des rôles locaux
+  const [rolesSubTab, setRolesSubTab] = useState<"users" | "permissions">("users");
+  const [selectedRoleForPermissions, setSelectedRoleForPermissions] = useState<any | null>(null);
+  const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
+  const [permissionsSaving, setPermissionsSaving] = useState(false);
+
+  // États de changement de mot de passe de l'utilisateur connecté
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [pwForm, setPwForm] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwError, setPwError] = useState("");
+  const [pwSuccess, setPwSuccess] = useState("");
+
+  const hasAccessToView = (view: AppView): boolean => {
+    // Le Super Admin plateforme n'accède QU'à son panel global et aux logs
+    if (currentUser.roleCode === "platform_super_admin") {
+      return view === "super-admin" || view === "audit-logs";
+    }
+
+    // Les utilisateurs locaux n'ont PAS accès au panel super-admin
+    if (view === "super-admin") return false;
+
+    const permMap: Record<AppView, string[]> = {
+      dashboard: [],
+      settings: ["establishment.manage"],
+      students: ["students.read"],
+      documents: ["students.read"],
+      teachers: ["teachers.manage"],
+      structure: ["classes.manage", "subjects.manage"],
+      payments: ["payments.read"],
+      grades: ["grades.read", "grades.enter"],
+      imports: ["imports.manage"],
+      backups: ["backups.manage"],
+      roles: ["users.manage"],
+      "super-admin": [],
+      "audit-logs": []
+    };
+
+    const required = permMap[view];
+    if (!required || required.length === 0) return true;
+    return required.some(p => currentUser.permissions.includes(p));
+  };
+
   const [structureTab, setStructureTab] = useState<StructureTab>("levels");
   const [paymentTab, setPaymentTab] = useState<PaymentTab>("fees");
   const [establishments, setEstablishments] = useState<Establishment[]>([]);
@@ -422,6 +622,32 @@ export function SchoolDashboard() {
   const [selectedPaymentStudentId, setSelectedPaymentStudentId] = useState("");
   const [editingFeeItemId, setEditingFeeItemId] = useState("");
   const [lastReceipt, setLastReceipt] = useState<PaymentRecord | null>(null);
+  const [gradesOverview, setGradesOverview] = useState<GradesOverview | null>(null);
+  const [gradesSaving, setGradesSaving] = useState(false);
+  const [gradeClassId, setGradeClassId] = useState("");
+  const [gradePeriodId, setGradePeriodId] = useState("");
+  const [gradeAssessmentId, setGradeAssessmentId] = useState("");
+  const [gradeEntries, setGradeEntries] = useState<Record<string, { score: string; comment: string }>>({});
+  const [reportCardData, setReportCardData] = useState<ReportCardData | null>(null);
+  const [reportCardLoading, setReportCardLoading] = useState(false);
+  const [importJobs, setImportJobs] = useState<ImportJobRecord[]>([]);
+  const [importSaving, setImportSaving] = useState(false);
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
+  const [csvRows, setCsvRows] = useState<Array<Record<string, string>>>([]);
+  const [importMapping, setImportMapping] = useState<Record<string, string>>({
+    lastName: "",
+    firstName: "",
+    gender: "",
+    birthDate: "",
+    matricule: "",
+    className: ""
+  });
+  const [importClassId, setImportClassId] = useState("");
+  const [backups, setBackups] = useState<BackupJob[]>([]);
+  const [backupSaving, setBackupSaving] = useState(false);
+  const [backupFilter, setBackupFilter] = useState<"ALL" | "SUCCESS" | "FAILED" | "RUNNING">("ALL");
+  const [backupSearch, setBackupSearch] = useState("");
+  const [restoringBackupId, setRestoringBackupId] = useState<string | null>(null);
   const [levels, setLevels] = useState<Level[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [classes, setClasses] = useState<SchoolClass[]>([]);
@@ -459,7 +685,8 @@ export function SchoolDashboard() {
     studentMatriculePrefix: "SB",
     studentMatriculeFormat: "{PREFIX}-{YEAR}-{SEQ}",
     studentMatriculeNextNumber: 1,
-    studentMatriculePadding: 4
+    studentMatriculePadding: 4,
+    reportCardColor: "#4f46e5"
   });
   const [yearForm, setYearForm] = useState({
     name: "2026-2027",
@@ -531,6 +758,18 @@ export function SchoolDashboard() {
     reference: "",
     receivedBy: ""
   });
+  const [periodForm, setPeriodForm] = useState({
+    name: "Trimestre 1",
+    type: "TRIMESTER",
+    startsAt: "",
+    endsAt: ""
+  });
+  const [assessmentForm, setAssessmentForm] = useState({
+    classSubjectId: "",
+    name: "Devoir 1",
+    maxScore: "20",
+    weight: "1"
+  });
 
   const selected = useMemo(
     () => establishments.find((item) => item.id === selectedId) ?? null,
@@ -562,6 +801,19 @@ export function SchoolDashboard() {
     () => paymentOverview?.students.find((student) => student.id === selectedPaymentStudentId) ?? null,
     [paymentOverview, selectedPaymentStudentId]
   );
+  const selectedGradeClass = useMemo(
+    () => gradesOverview?.classes.find((schoolClass) => schoolClass.id === gradeClassId) ?? null,
+    [gradeClassId, gradesOverview]
+  );
+  const selectedGradePeriod = useMemo(
+    () => gradesOverview?.periods.find((period) => period.id === gradePeriodId) ?? null,
+    [gradePeriodId, gradesOverview]
+  );
+  const selectedGradeAssessment = useMemo(
+    () => gradesOverview?.assessments.find((assessment) => assessment.id === gradeAssessmentId) ?? null,
+    [gradeAssessmentId, gradesOverview]
+  );
+  const gradeClassSubjects = selectedGradeClass?.classSubjects ?? [];
   const filteredStudents = useMemo(() => {
     const search = studentSearch.trim().toLowerCase();
     const filtered = students.filter((student) => {
@@ -688,7 +940,39 @@ export function SchoolDashboard() {
     void loadTeachers(selectedId);
     void loadStudents(selectedId);
     void loadPayments(selectedId);
+    void loadGrades(selectedId);
+    void loadImports(selectedId);
   }, [selectedId]);
+
+  useEffect(() => {
+    if (!selectedId || activeView !== "imports") {
+      return;
+    }
+    void loadImports(selectedId);
+  }, [activeView, selectedId]);
+
+  useEffect(() => {
+    if (!selectedId || activeView !== "backups") {
+      return;
+    }
+    void loadBackups(selectedId);
+  }, [activeView, selectedId]);
+
+  useEffect(() => {
+    if (!selectedId || activeView !== "roles") {
+      return;
+    }
+    void loadUsers(selectedId);
+    void loadRoles(selectedId);
+  }, [activeView, selectedId]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      return;
+    }
+
+    void loadGrades(selectedId, gradeClassId, gradePeriodId);
+  }, [gradeClassId, gradePeriodId, selectedId]);
 
   useEffect(() => {
     if (!students.length) {
@@ -727,6 +1011,25 @@ export function SchoolDashboard() {
   }, [paymentOverview]);
 
   useEffect(() => {
+    if (!gradesOverview) {
+      setGradeEntries({});
+      return;
+    }
+
+    const entries: Record<string, { score: string; comment: string }> = {};
+    for (const student of gradesOverview.students) {
+      const existingGrade = selectedGradeAssessment?.grades.find(
+        (grade) => grade.studentId === student.id
+      );
+      entries[student.id] = {
+        score: existingGrade ? String(existingGrade.score) : "",
+        comment: existingGrade?.comment ?? ""
+      };
+    }
+    setGradeEntries(entries);
+  }, [gradesOverview, selectedGradeAssessment]);
+
+  useEffect(() => {
     if (!selected) {
       return;
     }
@@ -745,7 +1048,8 @@ export function SchoolDashboard() {
       studentMatriculePrefix: selected.studentMatriculePrefix ?? "SB",
       studentMatriculeFormat: selected.studentMatriculeFormat ?? "{PREFIX}-{YEAR}-{SEQ}",
       studentMatriculeNextNumber: selected.studentMatriculeNextNumber ?? 1,
-      studentMatriculePadding: selected.studentMatriculePadding ?? 4
+      studentMatriculePadding: selected.studentMatriculePadding ?? 4,
+      reportCardColor: selected.reportCardColor ?? "#1e3a8a"
     });
   }, [selected]);
 
@@ -814,6 +1118,255 @@ export function SchoolDashboard() {
     } catch {
       setPaymentOverview(null);
       setAlerts(["Impossible de charger les paiements. Verifier l'API."]);
+    }
+  }
+
+  async function loadImports(establishmentId: string) {
+    try {
+      const data = await getImportJobs(establishmentId);
+      setImportJobs(data);
+    } catch {
+      setAlerts(["Impossible de charger les jobs d'importation. Vérifier l'API."]);
+    }
+  }
+
+  async function loadBackups(establishmentId: string) {
+    try {
+      const data = await getBackups(establishmentId);
+      setBackups(data);
+    } catch {
+      setAlerts(["Impossible de charger les sauvegardes. Vérifier l'API."]);
+    }
+  }
+
+  async function loadUsers(establishmentId: string) {
+    try {
+      const data = await getEstablishmentUsers(establishmentId);
+      setUsersList(data);
+    } catch {
+      setAlerts(["Impossible de charger les utilisateurs de l'établissement."]);
+    }
+  }
+
+  async function loadRoles(establishmentId: string) {
+    try {
+      const data = await getEstablishmentRoles(establishmentId);
+      setRolesList(data);
+    } catch {
+      setAlerts(["Impossible de charger les rôles disponibles."]);
+    }
+  }
+
+  async function handleSelfChangePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setPwError("");
+    setPwSuccess("");
+    if (pwForm.newPassword !== pwForm.confirmPassword) {
+      setPwError("Le nouveau mot de passe et sa confirmation ne correspondent pas.");
+      return;
+    }
+    if (pwForm.newPassword.length < 6) {
+      setPwError("Le nouveau mot de passe doit contenir au moins 6 caractères.");
+      return;
+    }
+    setPwSaving(true);
+    try {
+      await changePassword(pwForm.currentPassword, pwForm.newPassword);
+      setPwSuccess("✅ Mot de passe mis à jour avec succès !");
+      setPwForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+    } catch (error: any) {
+      setPwError(errorMessage(error, "❌ Erreur lors du changement de mot de passe."));
+    } finally {
+      setPwSaving(false);
+    }
+  }
+
+  async function handleCreateUser(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selected) return;
+    if (!userForm.roleId) {
+      setAlerts(["Veuillez sélectionner un rôle."]);
+      return;
+    }
+    setUserSaving(true);
+    try {
+      await createEstablishmentUser(selected.id, userForm);
+      setUserForm({ fullName: "", email: "", password: "", phone: "", roleId: "" });
+      setAlerts(["Utilisateur créé avec succès !"]);
+      await loadUsers(selected.id);
+    } catch (error: any) {
+      setAlerts([errorMessage(error, "Erreur lors de la création de l'utilisateur.")]);
+    } finally {
+      setUserSaving(false);
+    }
+  }
+
+  async function handleUpdateUser(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selected || !editingUser) return;
+    setUserSaving(true);
+    try {
+      await updateEstablishmentUser(selected.id, editingUser.id, {
+        fullName: userForm.fullName,
+        phone: userForm.phone,
+        roleId: userForm.roleId,
+        newPassword: userForm.password || undefined
+      });
+      setEditingUser(null);
+      setUserForm({ fullName: "", email: "", password: "", phone: "", roleId: "" });
+      setAlerts(["Utilisateur mis à jour avec succès !"]);
+      await loadUsers(selected.id);
+    } catch (error: any) {
+      setAlerts([errorMessage(error, "Erreur lors de la mise à jour.")]);
+    } finally {
+      setUserSaving(false);
+    }
+  }
+
+  async function handleDeleteUser(userId: string) {
+    if (!selected) return;
+    if (!confirm("Voulez-vous vraiment désactiver ce compte utilisateur ?")) return;
+    try {
+      await deleteEstablishmentUser(selected.id, userId);
+      setAlerts(["Compte utilisateur désactivé."]);
+      await loadUsers(selected.id);
+    } catch (error: any) {
+      setAlerts([errorMessage(error, "Erreur lors de la désactivation.")]);
+    }
+  }
+
+  function startEditUser(user: any) {
+    setEditingUser(user);
+    setUserForm({
+      fullName: user.fullName,
+      email: user.email,
+      password: "",
+      phone: user.phone || "",
+      roleId: user.roleId
+    });
+  }
+
+  async function handleSaveRolePermissions() {
+    if (!selected || !selectedRoleForPermissions) return;
+    setPermissionsSaving(true);
+    try {
+      await updateRolePermissions(selected.id, selectedRoleForPermissions.id, selectedPermissions);
+      setAlerts(["Permissions du rôle enregistrées avec succès !"]);
+      await loadRoles(selected.id);
+    } catch (error: any) {
+      setAlerts([errorMessage(error, "Erreur lors de l'enregistrement des permissions.")]);
+    } finally {
+      setPermissionsSaving(false);
+    }
+  }
+
+  function handleSelectRoleForPermissions(roleId: string) {
+    const role = rolesList.find((r) => r.id === roleId);
+    if (!role) {
+      setSelectedRoleForPermissions(null);
+      setSelectedPermissions([]);
+      return;
+    }
+    setSelectedRoleForPermissions(role);
+    const existingPerms = role.permissions?.map((p: any) => p.permission.code) || [];
+    setSelectedPermissions(existingPerms);
+  }
+
+  function handleTogglePermission(permCode: string) {
+    setSelectedPermissions((prev) =>
+      prev.includes(permCode)
+        ? prev.filter((p) => p !== permCode)
+        : [...prev, permCode]
+    );
+  }
+
+  async function handleStartBackup() {
+    if (!selected) {
+      setAlerts(["Sélectionner un établissement."]);
+      return;
+    }
+    setBackupSaving(true);
+    try {
+      const job = await startBackup(selected.id);
+      await loadBackups(selected.id);
+      if (job.status === "SUCCESS") {
+        setAlerts(["Sauvegarde terminée avec succès."]);
+      } else if (job.status === "FAILED") {
+        setAlerts([`Sauvegarde échouée : ${job.errorMessage || "Erreur inconnue."}`]);
+      }
+    } catch (error) {
+      setAlerts([errorMessage(error, "Impossible de lancer la sauvegarde.")]);
+    } finally {
+      setBackupSaving(false);
+    }
+  }
+
+  async function handleRestoreBackup(backupId: string) {
+    if (!selected) return;
+    if (!window.confirm("⚠️ ATTENTION : La restauration va REMPLACER toutes les données actuelles de cet établissement par celles de la sauvegarde.\n\nCette action est irréversible. Continuer ?")) {
+      return;
+    }
+    setRestoringBackupId(backupId);
+    try {
+      await restoreBackup(selected.id, backupId);
+      setAlerts(["✅ Restauration terminée avec succès ! Rechargez la page pour voir les données restaurées."]);
+      // Recharger les données
+      void loadDashboard(selected.id);
+      void loadStructure(selected.id);
+      void loadStudents(selected.id);
+      void loadTeachers(selected.id);
+      void loadPayments(selected.id);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Impossible de restaurer la sauvegarde.")]);
+    } finally {
+      setRestoringBackupId(null);
+    }
+  }
+
+  async function handleDeleteBackup(backupId: string) {
+    if (!selected) return;
+    if (!window.confirm("Supprimer définitivement cette sauvegarde et son fichier ?")) {
+      return;
+    }
+    try {
+      await deleteBackup(selected.id, backupId);
+      await loadBackups(selected.id);
+      setAlerts(["Sauvegarde supprimée."]);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Impossible de supprimer la sauvegarde.")]);
+    }
+  }
+
+  async function loadGrades(establishmentId: string, classId = gradeClassId, periodId = gradePeriodId) {
+    try {
+      const data = await getGradesOverview(establishmentId, {
+        academicYearId: activeYear?.id,
+        classId: classId || undefined,
+        periodId: periodId || undefined
+      });
+      setGradesOverview(data);
+      setGradeClassId((current) => current || data.selectedClassId || "");
+      setGradePeriodId((current) => current || data.selectedPeriodId || "");
+      setGradeAssessmentId((current) =>
+        current && data.assessments.some((assessment) => assessment.id === current)
+          ? current
+          : data.assessments[0]?.id ?? ""
+      );
+      const selectedClassForForm =
+        data.classes.find((schoolClass) => schoolClass.id === data.selectedClassId) ?? null;
+      setAssessmentForm((current) => ({
+        ...current,
+        classSubjectId:
+          current.classSubjectId &&
+          selectedClassForForm?.classSubjects.some(
+            (classSubject) => classSubject.id === current.classSubjectId
+          )
+            ? current.classSubjectId
+            : selectedClassForForm?.classSubjects[0]?.id || ""
+      }));
+    } catch {
+      setGradesOverview(null);
+      setAlerts(["Impossible de charger les notes. Verifier l'API."]);
     }
   }
 
@@ -1828,6 +2381,496 @@ export function SchoolDashboard() {
     }
   }
 
+  async function handleCreatePeriod(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!selected || !activeYear) {
+      setAlerts(["Creer ou activer une annee scolaire avant les periodes."]);
+      return;
+    }
+
+    setGradesSaving(true);
+    try {
+      const period = await createGradePeriod(selected.id, {
+        academicYearId: activeYear.id,
+        name: periodForm.name.trim(),
+        type: periodForm.type,
+        startsAt: periodForm.startsAt,
+        endsAt: periodForm.endsAt
+      });
+      setGradePeriodId(period.id);
+      setPeriodForm({ ...periodForm, name: "" });
+      await loadGrades(selected.id, gradeClassId, period.id);
+      setAlerts(["Periode de notes creee."]);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Creation de la periode impossible.")]);
+    } finally {
+      setGradesSaving(false);
+    }
+  }
+
+  async function handleCreateAssessment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!selected || !gradePeriodId) {
+      setAlerts(["Creer ou choisir une periode avant l'evaluation."]);
+      return;
+    }
+
+    if (!assessmentForm.classSubjectId) {
+      setAlerts(["Affecter une matiere a cette classe avant de creer une evaluation."]);
+      return;
+    }
+
+    const maxScore = Number(assessmentForm.maxScore || 20);
+    const weight = Number(assessmentForm.weight || 1);
+    if (!Number.isFinite(maxScore) || maxScore <= 0) {
+      setAlerts(["Le bareme doit etre superieur a zero."]);
+      return;
+    }
+    if (!Number.isFinite(weight) || weight < 0) {
+      setAlerts(["Le coefficient de l'evaluation doit etre positif ou zero."]);
+      return;
+    }
+
+    setGradesSaving(true);
+    try {
+      const assessment = await createAssessment(selected.id, {
+        periodId: gradePeriodId,
+        classSubjectId: assessmentForm.classSubjectId,
+        name: assessmentForm.name.trim(),
+        maxScore,
+        weight
+      });
+      setGradeAssessmentId(assessment.id);
+      setAssessmentForm({
+        ...assessmentForm,
+        name: "Devoir 1"
+      });
+      await loadGrades(selected.id, gradeClassId, gradePeriodId);
+      setGradeAssessmentId(assessment.id);
+      setAlerts(["Evaluation creee. Vous pouvez saisir les notes."]);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Creation de l'evaluation impossible.")]);
+    } finally {
+      setGradesSaving(false);
+    }
+  }
+
+  async function handleSaveGrades(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!selected || !selectedGradeAssessment || !gradesOverview) {
+      setAlerts(["Choisir une evaluation avant d'enregistrer les notes."]);
+      return;
+    }
+
+    const entries: Array<{ studentId: string; score: number; comment?: string }> = [];
+    for (const student of gradesOverview.students) {
+      const entry = gradeEntries[student.id];
+      if (!entry?.score.trim()) {
+        continue;
+      }
+      const score = Number(entry.score);
+      if (!Number.isFinite(score)) {
+        continue;
+      }
+      entries.push({
+        studentId: student.id,
+        score,
+        comment: entry.comment.trim() || undefined
+      });
+    }
+
+    if (!entries.length) {
+      setAlerts(["Saisir au moins une note avant d'enregistrer."]);
+      return;
+    }
+
+    const maxScore = selectedGradeAssessment.maxScore;
+    const hasInvalid = entries.some((entry) => entry.score < 0 || entry.score > maxScore);
+    if (hasInvalid) {
+      setAlerts([`Les notes doivent etre entre 0 et ${maxScore}.`]);
+      return;
+    }
+
+    setGradesSaving(true);
+    try {
+      await saveGrades(selected.id, {
+        assessmentId: selectedGradeAssessment.id,
+        enteredBy: "Administration",
+        grades: entries
+      });
+      await loadGrades(selected.id, gradeClassId, gradePeriodId);
+      setAlerts(["Notes enregistrees et rattachees au dossier eleve."]);
+    } catch (error) {
+      setAlerts([errorMessage(error, "Enregistrement des notes impossible.")]);
+    } finally {
+      setGradesSaving(false);
+    }
+  }
+
+  function handleCsvFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = String(e.target?.result || "");
+      const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+      if (lines.length === 0) {
+        setAlerts(["Le fichier CSV est vide."]);
+        return;
+      }
+
+      // Détecter le délimiteur (souvent ";" ou "," dans Excel francophone)
+      const firstLine = lines[0];
+      const delimiter = firstLine.includes(";") ? ";" : ",";
+
+      // Extraire les en-têtes
+      const headers = firstLine.split(delimiter).map(h => h.replace(/^["']|["']$/g, "").trim());
+      setCsvHeaders(headers);
+
+      // Extraire les lignes
+      const rows: Array<Record<string, string>> = [];
+      for (let i = 1; i < lines.length; i++) {
+        const values = lines[i].split(delimiter).map(v => v.replace(/^["']|["']$/g, "").trim());
+        const row: Record<string, string> = {};
+        headers.forEach((header, idx) => {
+          row[header] = values[idx] || "";
+        });
+        rows.push(row);
+      }
+      setCsvRows(rows);
+      setAlerts([`${rows.length} lignes chargées avec succès. Veuillez mapper les colonnes.`]);
+    };
+    reader.readAsText(file, "utf-8");
+  }
+
+  async function handleStartImport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) {
+      setAlerts(["Sélectionner un établissement d'abord."]);
+      return;
+    }
+    if (csvRows.length === 0) {
+      setAlerts(["Aucune donnée CSV n'est chargée."]);
+      return;
+    }
+    if (!importMapping.lastName || !importMapping.firstName) {
+      setAlerts(["Le nom et le prénom de l'élève sont obligatoires pour faire l'import."]);
+      return;
+    }
+
+    setImportSaving(true);
+    try {
+      const job = await startStudentImport(selected.id, {
+        type: "STUDENT",
+        mapping: importMapping,
+        rows: csvRows,
+        classId: importClassId || undefined
+      });
+      await loadImports(selected.id);
+      await loadStudents(selected.id);
+      
+      if (job.status === "success") {
+        setAlerts([`Importation réussie ! ${job.validRows} élève(s) importé(s) avec succès.`]);
+        // Reset le formulaire
+        setCsvHeaders([]);
+        setCsvRows([]);
+      } else if (job.status === "completed_with_errors") {
+        setAlerts([`Importation complétée avec des erreurs. ${job.validRows} élèves importés, ${job.errorRows} ligne(s) rejetée(s). Consultez le journal d'importation ci-dessous.`]);
+      } else {
+        setAlerts([`L'importation a échoué. ${job.errorRows} erreur(s) détectée(s).`]);
+      }
+    } catch (error) {
+      setAlerts([errorMessage(error, "Erreur lors du traitement de l'importation.")]);
+    } finally {
+      setImportSaving(false);
+    }
+  }
+
+  async function printReportCards(periodId: string, classId: string, filterStudentId?: string) {
+    if (!selected) {
+      setAlerts(["Sélectionner un établissement."]);
+      return;
+    }
+    setReportCardLoading(true);
+    try {
+      const data = await getReportCard(selected.id, { periodId, classId });
+      setReportCardData(data);
+
+      const studentsToPrint = filterStudentId
+        ? data.students.filter((s) => s.student.id === filterStudentId)
+        : data.students;
+
+      if (studentsToPrint.length === 0) {
+        setAlerts(["Aucun élève correspondant trouvé pour l'impression."]);
+        return;
+      }
+
+      const printWindow = window.open("", "_blank", "width=950,height=900");
+      if (!printWindow) {
+        setAlerts(["Fenêtre d'impression bloquée. Autoriser les popups."]);
+        return;
+      }
+
+      const logoUrl = apiFileUrl(data.establishment?.logoUrl);
+      const stampUrl = apiFileUrl(data.establishment?.stampUrl);
+      const directorSignatureUrl = apiFileUrl(data.establishment?.directorSignatureUrl);
+
+      const logoMarkup = logoUrl
+        ? `<img class="logo" src="${escapeHtml(logoUrl)}" alt="Logo" />`
+        : `<div class="logo-fallback">${escapeHtml(data.establishment?.name.slice(0, 2).toUpperCase() ?? "EC")}</div>`;
+
+      const stampMarkup = stampUrl
+        ? `<img class="stamp" src="${escapeHtml(stampUrl)}" alt="Cachet" />`
+        : "";
+
+      const signatureMarkup = directorSignatureUrl
+        ? `<img class="signature" src="${escapeHtml(directorSignatureUrl)}" alt="Signature Directeur" />`
+        : "";
+
+      const themeColor = data.establishment?.reportCardColor || "#1e3a8a";
+
+      let html = `<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>Bulletins - ${escapeHtml(data.schoolClass.name)} - ${escapeHtml(data.period.name)}</title>
+  <style>
+    @media print {
+      body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .bulletin-page { page-break-after: always; height: 100vh; display: flex; flex-direction: column; box-sizing: border-box; padding: 14px 20px; }
+      .bulletin-page:last-child { page-break-after: avoid; }
+    }
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1f2937; line-height: 1.35; font-size: 11px; margin: 0; }
+    .bulletin-page { padding: 20px 30px; max-width: 850px; margin: 0 auto; min-height: 1100px; display: flex; flex-direction: column; border: 2px solid ${themeColor}; }
+
+    /* === EN-TÊTE PAYS === */
+    .country-header { display: flex; justify-content: space-between; align-items: flex-start; text-align: center; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 2px solid ${themeColor}; }
+    .country-left { text-align: left; flex: 1; font-size: 10px; line-height: 1.3; }
+    .country-left strong { font-size: 12px; display: block; text-transform: uppercase; color: ${themeColor}; }
+    .country-center { flex: 1; display: flex; flex-direction: column; align-items: center; }
+    .country-right { text-align: right; flex: 1; font-size: 10px; line-height: 1.3; }
+    .country-right strong { font-size: 12px; display: block; text-transform: uppercase; color: ${themeColor}; }
+
+    .logo { width: 60px; height: 60px; object-fit: contain; }
+    .logo-fallback { display: grid; width: 60px; height: 60px; place-items: center; background: ${themeColor}; color: white; font-weight: 800; font-size: 18px; border-radius: 6px; }
+
+    /* === TITRE BULLETIN === */
+    .bulletin-title { text-align: center; background: ${themeColor}; color: white; padding: 6px 0; margin: 6px 0; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; border-radius: 4px; }
+
+    /* === INFO ÉLÈVE === */
+    .student-info { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px; font-size: 11px; margin-bottom: 8px; padding: 6px 10px; background: #f8f9fa; border-left: 4px solid ${themeColor}; border-radius: 0 4px 4px 0; }
+    .student-info p { margin: 2px 0; }
+    .student-info strong { color: #111; }
+
+    /* === TABLEAU NOTES === */
+    table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    th, td { border: 1px solid #999; padding: 4px 5px; text-align: center; }
+    th { background: ${themeColor}; color: white; font-weight: 600; text-transform: uppercase; font-size: 9px; letter-spacing: 0.03em; }
+    .subject-name { text-align: left; font-weight: 600; }
+    .group-header td { background: ${themeColor}22; font-weight: 700; text-align: left; font-size: 10px; color: ${themeColor}; text-transform: uppercase; letter-spacing: 0.05em; border-top: 2px solid ${themeColor}; }
+    .subtotal-row td { background: #f0f0f0; font-weight: 700; font-size: 10px; border-top: 1.5px solid ${themeColor}; }
+    .grand-total td { background: ${themeColor}; color: white; font-weight: 700; font-size: 11px; }
+    tr:nth-child(even):not(.group-header):not(.subtotal-row):not(.grand-total) td { background: #fafafa; }
+
+    .appreciation { font-size: 9px; font-style: italic; text-align: left; }
+
+    /* === PIED DE PAGE === */
+    .footer-section { margin-top: auto; padding-top: 8px; }
+    .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; font-size: 11px; }
+    .summary-box { border: 1px solid #ccc; border-radius: 4px; padding: 8px 10px; }
+    .summary-box h4 { margin: 0 0 4px 0; font-size: 11px; color: ${themeColor}; border-bottom: 1px solid #eee; padding-bottom: 3px; }
+    .summary-box p { margin: 2px 0; }
+
+    .decision-box { text-align: center; border: 2px solid ${themeColor}; border-radius: 4px; padding: 6px; margin-bottom: 8px; font-size: 12px; font-weight: 700; }
+
+    .signatures-row { display: flex; justify-content: space-between; text-align: center; margin-top: 6px; }
+    .sig-block { min-width: 140px; position: relative; }
+    .sig-block .sig-title { font-weight: 600; font-size: 10px; color: #374151; margin-bottom: 40px; display: block; }
+    .sig-block .sig-name { font-size: 10px; font-weight: 600; margin-top: 4px; }
+    .stamp { max-width: 90px; max-height: 60px; position: absolute; bottom: 0; right: 0; opacity: 0.8; }
+    .signature { max-width: 100px; max-height: 50px; object-fit: contain; }
+
+    .disclaimer { text-align: center; font-size: 8px; color: #999; margin-top: 4px; font-style: italic; }
+  </style>
+</head>
+<body>`;
+
+      // Build each student page
+      for (const rs of studentsToPrint) {
+        const totalCoef = rs.subjectAverages.reduce((sum: number, s: any) => sum + s.coefficient, 0);
+        const birthStr = rs.student.birthDate ? new Date(rs.student.birthDate).toLocaleDateString("fr-FR") : "-";
+        const totalWeighted = rs.generalAverage !== null ? Math.round(rs.generalAverage * totalCoef * 100) / 100 : null;
+
+        // Grouper les matières par subjectGroup
+        const groups = new Map<string, typeof rs.subjectAverages>();
+        for (const sa of rs.subjectAverages) {
+          const groupName = (sa as any).subjectGroup || "AUTRES MATIERES";
+          if (!groups.has(groupName)) groups.set(groupName, []);
+          groups.get(groupName)!.push(sa);
+        }
+
+        // Générer le HTML des lignes du tableau par groupe
+        let tableRows = "";
+        for (const [groupName, subjects] of groups) {
+          const groupCoef = subjects.reduce((s: number, sa: any) => s + sa.coefficient, 0);
+          const groupWeighted = subjects.reduce((s: number, sa: any) => {
+            if (sa.average === null) return s;
+            return s + sa.average * sa.coefficient;
+          }, 0);
+          const groupDenom = subjects.reduce((s: number, sa: any) => sa.average !== null ? s + sa.coefficient : s, 0);
+          const groupMoy = groupDenom > 0 ? groupWeighted / groupDenom : null;
+
+          tableRows += '<tr class="group-header"><td colspan="8">' + escapeHtml(groupName) + '</td></tr>';
+
+          for (const sa of subjects) {
+            const grades = sa.grades || [];
+            const interros = grades.filter((g: any) => g.weight <= 1);
+            const devoirs = grades.filter((g: any) => g.weight > 1 && g.weight <= 2);
+            const compos = grades.filter((g: any) => g.weight > 2);
+            
+            const avgInterro = interros.length ? (interros.reduce((s: number, g: any) => s + (g.score >= 0 ? g.score : 0), 0) / interros.length) : null;
+            const avgDevoir = devoirs.length ? (devoirs.reduce((s: number, g: any) => s + (g.score >= 0 ? g.score : 0), 0) / devoirs.length) : null;
+            const avgCompo = compos.length ? (compos.reduce((s: number, g: any) => s + (g.score >= 0 ? g.score : 0), 0) / compos.length) : null;
+
+            const weighted = sa.average !== null ? Math.round(sa.average * sa.coefficient * 100) / 100 : null;
+            
+            let appreciation = "";
+            if (sa.average !== null) {
+              if (sa.average >= 16) appreciation = "Excellent";
+              else if (sa.average >= 14) appreciation = "Très Bien";
+              else if (sa.average >= 12) appreciation = "Bien";
+              else if (sa.average >= 10) appreciation = "Assez Bien";
+              else if (sa.average >= 8) appreciation = "Passable";
+              else if (sa.average >= 5) appreciation = "Insuffisant";
+              else appreciation = "Faible";
+            }
+
+            tableRows += '<tr>'
+              + '<td class="subject-name">' + escapeHtml(sa.subjectName) + '</td>'
+              + '<td>' + sa.coefficient + '</td>'
+              + '<td>' + (avgInterro !== null ? avgInterro.toFixed(2) : "-") + '</td>'
+              + '<td>' + (avgDevoir !== null ? avgDevoir.toFixed(2) : "-") + '</td>'
+              + '<td>' + (avgCompo !== null ? avgCompo.toFixed(2) : "-") + '</td>'
+              + '<td><strong>' + (sa.average !== null ? sa.average.toFixed(2) : "-") + '</strong></td>'
+              + '<td>' + (weighted !== null ? weighted.toFixed(2) : "-") + '</td>'
+              + '<td class="appreciation">' + appreciation + '</td>'
+              + '</tr>';
+          }
+
+          tableRows += '<tr class="subtotal-row">'
+            + '<td style="text-align: left;">Total ' + escapeHtml(groupName.toLowerCase()) + '</td>'
+            + '<td>' + groupCoef + '</td>'
+            + '<td colspan="3"></td>'
+            + '<td><strong>Moy: ' + (groupMoy !== null ? groupMoy.toFixed(2) : "-") + '</strong></td>'
+            + '<td><strong>' + groupWeighted.toFixed(2) + '</strong></td>'
+            + '<td></td>'
+            + '</tr>';
+        }
+
+        const genderStr = rs.student.gender === "MALE" ? "M" : rs.student.gender === "FEMALE" ? "F" : "-";
+        const decisionColor = rs.generalAverage !== null && rs.generalAverage >= 10 ? "#16a34a" : "#dc2626";
+        const decisionText = rs.generalAverage !== null && rs.generalAverage >= 10 ? "ADMIS(E) EN CLASSE SUPÉRIEURE" : "AJOURNÉ(E)";
+
+        html += '<div class="bulletin-page"><div>'
+          + '<div class="country-header">'
+          + '<div class="country-left">'
+          + '<strong>Burkina Faso</strong>'
+          + 'Unité - Progrès - Justice<br/>'
+          + '————————<br/>'
+          + "Ministère de l'Éducation<br/>"
+          + 'Nationale et de la Promotion<br/>'
+          + 'des Langues Nationales'
+          + '</div>'
+          + '<div class="country-center">' + logoMarkup + '</div>'
+          + '<div class="country-right">'
+          + '<strong>' + escapeHtml(data.establishment?.name ?? "") + '</strong>'
+          + escapeHtml(data.establishment?.city ?? "") + '<br/>'
+          + 'Tél : ' + escapeHtml(data.establishment?.phone ?? "") + '<br/>'
+          + escapeHtml(data.establishment?.motto ?? "")
+          + '</div>'
+          + '</div>'
+
+          + '<div class="bulletin-title">BULLETIN DE NOTES — ' + escapeHtml(data.period.name) + '</div>'
+
+          + '<div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">'
+          + '<span>Année scolaire : <strong>' + escapeHtml(data.academicYear?.name ?? "") + '</strong></span>'
+          + '<span>Effectif : <strong>' + data.totalStudents + ' élèves</strong></span>'
+          + '</div>'
+
+          + '<div class="student-info">'
+          + "<p>Nom de l'élève : <strong>" + escapeHtml(rs.student.lastName.toUpperCase()) + " " + escapeHtml(rs.student.firstName) + '</strong></p>'
+          + '<p>Classe : <strong>' + escapeHtml(data.schoolClass.name) + '</strong></p>'
+          + '<p>Né(e) le : <strong>' + birthStr + '</strong> | Sexe : <strong>' + genderStr + '</strong></p>'
+          + '<p>Matricule : <strong>' + escapeHtml(rs.student.matricule) + '</strong></p>'
+          + '</div>'
+
+          + '<table><thead><tr>'
+          + '<th style="width: 22%;">Matières</th>'
+          + '<th style="width: 6%;">Coef</th>'
+          + '<th style="width: 9%;">Interro</th>'
+          + '<th style="width: 9%;">Devoir</th>'
+          + '<th style="width: 9%;">Compo</th>'
+          + '<th style="width: 9%;">Moy</th>'
+          + '<th style="width: 11%;">Notes Pond.</th>'
+          + '<th style="width: 25%;">Appréciation</th>'
+          + '</tr></thead><tbody>'
+          + tableRows
+          + '<tr class="grand-total">'
+          + '<td style="text-align: left;">TOTAL GÉNÉRAL</td>'
+          + '<td>' + totalCoef + '</td>'
+          + '<td colspan="3"></td>'
+          + '<td><strong>' + (rs.generalAverage !== null ? rs.generalAverage.toFixed(2) : "-") + '</strong></td>'
+          + '<td><strong>' + (totalWeighted !== null ? totalWeighted.toFixed(2) : "-") + '</strong></td>'
+          + '<td>Rang : <strong>' + (rs.rank !== null ? rs.rank + "e / " + data.totalStudents : "-") + '</strong></td>'
+          + '</tr></tbody></table></div>'
+
+          + '<div class="footer-section">'
+          + '<div class="summary-grid">'
+          + '<div class="summary-box">'
+          + "<h4>Résultats de l'élève</h4>"
+          + "<p>Moyenne de l'élève : <strong>" + (rs.generalAverage !== null ? rs.generalAverage.toFixed(2) : "-") + " / 20</strong></p>"
+          + '<p>Rang : <strong>' + (rs.rank !== null ? rs.rank + "e / " + data.totalStudents : "-") + '</strong></p>'
+          + '<p>Total notes pondérées : <strong>' + (totalWeighted !== null ? totalWeighted.toFixed(2) : "-") + '</strong></p>'
+          + '</div>'
+          + '<div class="summary-box">'
+          + '<h4>Résultats de la classe</h4>'
+          + '<p>Moyenne de la classe : <strong>' + (data.classAverage !== null ? data.classAverage.toFixed(2) : "-") + ' / 20</strong></p>'
+          + '<p>Meilleure moyenne : <strong>' + (data.bestAverage !== null ? Number(data.bestAverage).toFixed(2) : "-") + '</strong></p>'
+          + '<p>Plus faible moyenne : <strong>' + (data.worstAverage !== null ? Number(data.worstAverage).toFixed(2) : "-") + '</strong></p>'
+          + '</div></div>'
+
+          + '<div class="decision-box" style="border-color: ' + decisionColor + '; color: ' + decisionColor + ';">'
+          + 'Appréciation du conseil de classe : ' + decisionText
+          + '</div>'
+
+          + '<div class="signatures-row">'
+          + '<div class="sig-block"><span class="sig-title">Le Titulaire</span></div>'
+          + '<div class="sig-block"><span class="sig-title">Le Parent</span></div>'
+          + '<div class="sig-block"><span class="sig-title">Le Chef d\'Établissement</span>'
+          + signatureMarkup + stampMarkup
+          + '</div></div>'
+
+          + '<div class="disclaimer">'
+          + escapeHtml(data.establishment?.city ?? "") + ', le ' + new Date().toLocaleDateString("fr-FR") + ' — Toute surcharge rend ce bulletin sans valeur.'
+          + '</div></div></div>';
+      }
+
+      html += '</body></html>';
+
+      printWindow.document.write(html);
+      printWindow.document.close();
+    } catch (error) {
+      setAlerts([errorMessage(error, "Génération des bulletins impossible.")]);
+    } finally {
+      setReportCardLoading(false);
+    }
+  }
+
   function printPaymentReceipt(payment: PaymentRecord) {
     const establishment = paymentOverview?.establishment ?? selected;
     if (!establishment) {
@@ -1964,80 +3007,135 @@ export function SchoolDashboard() {
         </div>
 
         <nav className="nav-section" aria-label="Navigation principale">
-          {navGroups.map((group) => (
-            <div className="nav-group" key={group.label}>
-              <span className="nav-group-label">{group.label}</span>
-              {group.items.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <div key={item.label}>
-                    <button
-                      className={`nav-button ${activeView === item.view ? "active" : ""}`}
-                      title={item.label}
-                      type="button"
-                      onClick={() => setActiveView(item.view)}
-                    >
-                      <Icon size={18} />
-                      <span>{item.label}</span>
-                    </button>
-                    {"submenu" in item && item.submenu && activeView === item.view ? (
-                      <div className="nav-submenu">
-                        {item.submenu.map((tab) => (
-                          <button
-                            className={
-                              (item.view === "structure" && structureTab === tab.value) ||
-                              (item.view === "payments" && paymentTab === tab.value)
-                                ? "active"
-                                : ""
-                            }
-                            key={tab.value}
-                            type="button"
-                            onClick={() => {
-                              if (item.view === "structure") {
-                                setStructureTab(tab.value as StructureTab);
+          {navGroups
+            .map((group) => {
+              const visibleItems = group.items.filter((item) => hasAccessToView(item.view));
+              return { ...group, items: visibleItems };
+            })
+            .filter((group) => group.items.length > 0)
+            .map((group) => (
+              <div className="nav-group" key={group.label}>
+                <span className="nav-group-label">{group.label}</span>
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <div key={item.label}>
+                      <button
+                        className={`nav-button ${activeView === item.view ? "active" : ""}`}
+                        title={item.label}
+                        type="button"
+                        onClick={() => setActiveView(item.view)}
+                      >
+                        <Icon size={18} />
+                        <span>{item.label}</span>
+                      </button>
+                      {"submenu" in item && item.submenu && activeView === item.view ? (
+                        <div className="nav-submenu">
+                          {item.submenu.map((tab) => (
+                            <button
+                              className={
+                                (item.view === "structure" && structureTab === tab.value) ||
+                                (item.view === "payments" && paymentTab === tab.value)
+                                  ? "active"
+                                  : ""
                               }
-                              if (item.view === "payments") {
-                                setPaymentTab(tab.value as PaymentTab);
-                              }
-                            }}
-                          >
-                            {tab.label}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          ))}
+                              key={tab.value}
+                              type="button"
+                              onClick={() => {
+                                if (item.view === "structure") {
+                                  setStructureTab(tab.value as StructureTab);
+                                }
+                                if (item.view === "payments") {
+                                  setPaymentTab(tab.value as PaymentTab);
+                                }
+                              }}
+                            >
+                              {tab.label}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
         </nav>
       </aside>
 
       <section className="content">
         <header className="topbar">
           <div>
-            <h1>{selected?.name ?? "Administration etablissement"}</h1>
-            <p>{selected ? `${selected.city ?? "Ville non renseignee"} - ${selected.country}` : "MVP local en preparation"}</p>
+            {currentUser.roleCode === "platform_super_admin" ? (
+              <>
+                <h1 style={{ background: "linear-gradient(90deg, #818cf8, #c084fc)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+                  Gestion Globale de la Plateforme
+                </h1>
+                <p style={{ color: "var(--text-muted)", fontSize: "12px" }}>Administration centrale — Établissements, Licences, Comptes</p>
+              </>
+            ) : (
+              <>
+                <h1>{selected?.name ?? "Administration etablissement"}</h1>
+                <p>{selected ? `${selected.city ?? "Ville non renseignee"} - ${selected.country}` : "MVP local en preparation"}</p>
+              </>
+            )}
           </div>
           <div className="topbar-actions">
-            {establishments.length > 1 ? (
-              <select
-                className="compact-select"
-                value={selectedId}
-                onChange={(event) => setSelectedId(event.target.value)}
-                title="Changer d'etablissement"
-              >
-                {establishments.map((establishment) => (
-                  <option key={establishment.id} value={establishment.id}>
-                    {establishment.name}
-                  </option>
-                ))}
-              </select>
-            ) : null}
             <div className="status-pill">
               <span className={`status-dot ${online ? "online" : ""}`} />
               {online ? "API connectee" : "API hors ligne"}
+            </div>
+
+            <div className="user-profile-widget" style={{ display: "flex", alignItems: "center", gap: "10px", marginLeft: "10px", borderLeft: "1px solid var(--line)", paddingLeft: "12px" }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", fontSize: "12px", lineHeight: "1.3" }}>
+                <strong style={{ color: "#0f172a", fontWeight: 700, fontSize: "13px" }}>{currentUser.fullName}</strong>
+                <span style={{ color: "#475569", fontSize: "11px", fontWeight: 600 }}>
+                  {getFriendlyRoleName(currentUser.roleCode)}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPasswordModal(true);
+                  setPwError("");
+                  setPwSuccess("");
+                  setPwForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+                }}
+                style={{
+                  padding: "6px 12px",
+                  height: "auto",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  border: "1.5px solid #94a3b8",
+                  background: "#ffffff",
+                  color: "#0f172a",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  marginRight: "4px",
+                  boxShadow: "0 1px 2px rgba(0,0,0,0.05)"
+                }}
+              >
+                Mot de passe
+              </button>
+              <button
+                type="button"
+                onClick={onLogout}
+                style={{
+                  padding: "6px 12px",
+                  height: "auto",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  border: "1.5px solid #94a3b8",
+                  background: "#f1f5f9",
+                  color: "#0f172a",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  boxShadow: "0 1px 2px rgba(0,0,0,0.05)"
+                }}
+              >
+                Déconnexion
+              </button>
+
             </div>
           </div>
         </header>
@@ -2195,6 +3293,23 @@ export function SchoolDashboard() {
                           setSettingsForm({ ...settingsForm, motto: event.target.value })
                         }
                       />
+                    </label>
+                    <label className="field">
+                      <span>Couleur du bulletin</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        <input
+                          disabled={!selected}
+                          type="color"
+                          value={settingsForm.reportCardColor || "#1e3a8a"}
+                          onChange={(event) =>
+                            setSettingsForm({ ...settingsForm, reportCardColor: event.target.value })
+                          }
+                          style={{ width: "48px", height: "36px", padding: "2px", cursor: "pointer", border: "1px solid var(--line)", borderRadius: "6px" }}
+                        />
+                        <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                          {settingsForm.reportCardColor || "#1e3a8a"} — en-tête et bordures du bulletin
+                        </span>
+                      </div>
                     </label>
                     <div className="section-title field full">
                       <strong>Matricule automatique</strong>
@@ -3685,12 +4800,24 @@ export function SchoolDashboard() {
                           <div className="dossier-list">
                             {studentDossier.pedagogy.reportCards.length ? (
                               studentDossier.pedagogy.reportCards.slice(0, 5).map((reportCard) => (
-                                <div className="dossier-row" key={reportCard.id}>
-                                  <strong>{reportCard.periodName ?? "Periode"}</strong>
-                                  <span>{reportCard.academicYearName ?? "Annee non renseignee"}</span>
-                                  <small>
-                                    Moyenne : {reportCard.average ?? "-"} - Rang : {reportCard.rank ?? "-"}
-                                  </small>
+                                <div className="dossier-row" key={reportCard.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+                                  <div>
+                                    <strong>{reportCard.periodName ?? "Période"}</strong>
+                                    <span>{reportCard.academicYearName ?? "Année non renseignée"}</span>
+                                    <small>
+                                      Moyenne : {reportCard.average !== null ? Number(reportCard.average).toFixed(2) : "-"} - Rang : {reportCard.rank ?? "-"}
+                                    </small>
+                                  </div>
+                                  <button
+                                    className="ghost-button"
+                                    type="button"
+                                    onClick={() => void printReportCards(reportCard.periodId, reportCard.classId, studentDossier.student.id)}
+                                    title="Imprimer ce bulletin"
+                                    style={{ padding: "4px 8px", height: "auto", fontSize: "11px", display: "flex", alignItems: "center", gap: "4px" }}
+                                  >
+                                    <Printer size={12} />
+                                    Imprimer
+                                  </button>
                                 </div>
                               ))
                             ) : studentDossier.pedagogy.grades.length ? (
@@ -4417,6 +5544,346 @@ export function SchoolDashboard() {
             </div>
             ) : null}
 
+            {activeView === "grades" ? (
+            <div className="panel">
+              <div className="panel-header">
+                <div>
+                  <h2>Notes</h2>
+                  <span>Periodes, evaluations et saisie des notes</span>
+                </div>
+                <BookOpen size={20} />
+              </div>
+
+              {alerts.length ? (
+                <div className="inline-alerts">
+                  {alerts.map((alert) => (
+                    <div className="alert-item" key={alert}>
+                      <AlertTriangle size={18} />
+                      <span>{alert}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {gradesOverview ? (
+                <div className="grades-workspace">
+                  <div className="settings-block">
+                    <div className="section-title">
+                      <strong>Periodes</strong>
+                      <span>{gradesOverview.academicYear.name}</span>
+                    </div>
+                    <form className="setup-form" onSubmit={handleCreatePeriod}>
+                      <label className="field">
+                        <span className="required">Nom</span>
+                        <input
+                          disabled={gradesSaving}
+                          minLength={2}
+                          placeholder="Exemple : Trimestre 1"
+                          required
+                          value={periodForm.name}
+                          onChange={(event) =>
+                            setPeriodForm({ ...periodForm, name: event.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="field">
+                        <span className="required">Type</span>
+                        <select
+                          disabled={gradesSaving}
+                          value={periodForm.type}
+                          onChange={(event) =>
+                            setPeriodForm({ ...periodForm, type: event.target.value })
+                          }
+                        >
+                          <option value="TRIMESTER">Trimestre</option>
+                          <option value="SEMESTER">Semestre</option>
+                          <option value="CUSTOM">Autre</option>
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span>Debut</span>
+                        <input
+                          disabled={gradesSaving}
+                          type="date"
+                          value={periodForm.startsAt}
+                          onChange={(event) =>
+                            setPeriodForm({ ...periodForm, startsAt: event.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Fin</span>
+                        <input
+                          disabled={gradesSaving}
+                          type="date"
+                          value={periodForm.endsAt}
+                          onChange={(event) =>
+                            setPeriodForm({ ...periodForm, endsAt: event.target.value })
+                          }
+                        />
+                      </label>
+                      <button className="primary-button field full" disabled={gradesSaving} type="submit">
+                        {gradesSaving ? <Loader2 size={17} /> : <Plus size={17} />}
+                        Ajouter la periode
+                      </button>
+                    </form>
+                  </div>
+
+                  <div className="settings-block">
+                    <div className="section-title">
+                      <strong>Classe et evaluation</strong>
+                      <span>{gradesOverview.students.length} eleve(s)</span>
+                    </div>
+                    <div className="setup-form">
+                      <label className="field">
+                        <span className="required">Classe</span>
+                        <select
+                          disabled={gradesSaving}
+                          value={gradeClassId}
+                          onChange={(event) => {
+                            setGradeAssessmentId("");
+                            setAssessmentForm({ ...assessmentForm, classSubjectId: "" });
+                            setGradeClassId(event.target.value);
+                          }}
+                        >
+                          {gradesOverview.classes.map((schoolClass) => (
+                            <option key={schoolClass.id} value={schoolClass.id}>
+                              {schoolClass.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span className="required">Periode</span>
+                        <select
+                          disabled={gradesSaving || !gradesOverview.periods.length}
+                          value={gradePeriodId}
+                          onChange={(event) => {
+                            setGradeAssessmentId("");
+                            setGradePeriodId(event.target.value);
+                          }}
+                        >
+                          <option value="">
+                            {gradesOverview.periods.length ? "Choisir une periode" : "Creer une periode"}
+                          </option>
+                          {gradesOverview.periods.map((period) => (
+                            <option key={period.id} value={period.id}>
+                              {period.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    <form className="setup-form grade-assessment-form" onSubmit={handleCreateAssessment}>
+                      <label className="field">
+                        <span className="required">Matiere</span>
+                        <select
+                          disabled={gradesSaving || !gradeClassSubjects.length}
+                          required
+                          value={assessmentForm.classSubjectId}
+                          onChange={(event) =>
+                            setAssessmentForm({
+                              ...assessmentForm,
+                              classSubjectId: event.target.value
+                            })
+                          }
+                        >
+                          <option value="">
+                            {gradeClassSubjects.length
+                              ? "Choisir une matiere"
+                              : "Affecter une matiere a cette classe"}
+                          </option>
+                          {gradeClassSubjects.map((classSubject) => (
+                            <option key={classSubject.id} value={classSubject.id}>
+                              {classSubject.subject.name}
+                              {classSubject.teacher
+                                ? ` - ${classSubject.teacher.lastName} ${classSubject.teacher.firstName}`
+                                : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span className="required">Evaluation</span>
+                        <input
+                          disabled={gradesSaving}
+                          minLength={2}
+                          placeholder="Exemple : Devoir 1"
+                          required
+                          value={assessmentForm.name}
+                          onChange={(event) =>
+                            setAssessmentForm({ ...assessmentForm, name: event.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="field">
+                        <span className="required">Bareme</span>
+                        <input
+                          disabled={gradesSaving}
+                          min={1}
+                          required
+                          step="0.25"
+                          type="number"
+                          value={assessmentForm.maxScore}
+                          onChange={(event) =>
+                            setAssessmentForm({ ...assessmentForm, maxScore: event.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Coefficient eval.</span>
+                        <input
+                          disabled={gradesSaving}
+                          min={0}
+                          step="0.25"
+                          type="number"
+                          value={assessmentForm.weight}
+                          onChange={(event) =>
+                            setAssessmentForm({ ...assessmentForm, weight: event.target.value })
+                          }
+                        />
+                      </label>
+                      <button
+                        className="primary-button field full"
+                        disabled={gradesSaving || !gradePeriodId || !gradeClassSubjects.length}
+                        type="submit"
+                      >
+                        {gradesSaving ? <Loader2 size={17} /> : <Plus size={17} />}
+                        Creer l'evaluation
+                      </button>
+                    </form>
+
+                    <div className="report-card-actions" style={{ marginTop: "14px", paddingTop: "14px", borderTop: "1px solid var(--line)" }}>
+                      <button
+                        className="ghost-button field full"
+                        disabled={reportCardLoading || !gradePeriodId || !gradeClassId}
+                        type="button"
+                        onClick={() => printReportCards(gradePeriodId, gradeClassId)}
+                      >
+                        {reportCardLoading ? <Loader2 size={17} /> : <FileText size={17} />}
+                        Imprimer les bulletins de la classe
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="settings-block">
+                    <div className="section-title">
+                      <strong>Saisie des notes</strong>
+                      <span>{selectedGradePeriod?.name ?? "Periode requise"}</span>
+                    </div>
+                    <label className="field full">
+                      <span className="required">Evaluation active</span>
+                      <select
+                        disabled={gradesSaving || !gradesOverview.assessments.length}
+                        value={gradeAssessmentId}
+                        onChange={(event) => setGradeAssessmentId(event.target.value)}
+                      >
+                        <option value="">
+                          {gradesOverview.assessments.length
+                            ? "Choisir une evaluation"
+                            : "Creer une evaluation"}
+                        </option>
+                        {gradesOverview.assessments.map((assessment) => (
+                          <option key={assessment.id} value={assessment.id}>
+                            {assessment.classSubject.subject.name} - {assessment.name} / {assessment.maxScore}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    {selectedGradeAssessment ? (
+                      <form onSubmit={handleSaveGrades}>
+                        <div className="student-table-wrap grade-table-wrap">
+                          {gradesOverview.students.length ? (
+                            <table className="student-table grade-table">
+                              <thead>
+                                <tr>
+                                  <th>Matricule</th>
+                                  <th>Eleve</th>
+                                  <th>Note / {selectedGradeAssessment.maxScore}</th>
+                                  <th>Observation</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {gradesOverview.students.map((student) => {
+                                  const entry = gradeEntries[student.id] ?? { score: "", comment: "" };
+                                  return (
+                                    <tr key={student.id}>
+                                      <td>
+                                        <strong>{student.matricule}</strong>
+                                      </td>
+                                      <td>
+                                        <strong>
+                                          {student.lastName} {student.firstName}
+                                        </strong>
+                                        <span>{selectedGradeClass?.name ?? ""}</span>
+                                      </td>
+                                      <td>
+                                        <input
+                                          className="grade-score-input"
+                                          disabled={gradesSaving}
+                                          max={selectedGradeAssessment.maxScore}
+                                          min={0}
+                                          step="0.25"
+                                          type="number"
+                                          value={entry.score}
+                                          onChange={(event) =>
+                                            setGradeEntries({
+                                              ...gradeEntries,
+                                              [student.id]: {
+                                                ...entry,
+                                                score: event.target.value
+                                              }
+                                            })
+                                          }
+                                        />
+                                      </td>
+                                      <td>
+                                        <input
+                                          disabled={gradesSaving}
+                                          placeholder="Observation"
+                                          value={entry.comment}
+                                          onChange={(event) =>
+                                            setGradeEntries({
+                                              ...gradeEntries,
+                                              [student.id]: {
+                                                ...entry,
+                                                comment: event.target.value
+                                              }
+                                            })
+                                          }
+                                        />
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          ) : (
+                            <div className="empty-state compact">Aucun eleve inscrit dans cette classe.</div>
+                          )}
+                        </div>
+                        <button
+                          className="primary-button grade-save-button"
+                          disabled={gradesSaving || !gradesOverview.students.length}
+                          type="submit"
+                        >
+                          {gradesSaving ? <Loader2 size={17} /> : <Save size={17} />}
+                          Enregistrer les notes
+                        </button>
+                      </form>
+                    ) : (
+                      <div className="empty-state compact">Creer ou choisir une evaluation pour saisir les notes.</div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="empty-state">Aucune donnee de notes chargee.</div>
+              )}
+            </div>
+            ) : null}
+
             {activeView === "dashboard" ? (
             <>
             <div className="panel">
@@ -4525,15 +5992,817 @@ export function SchoolDashboard() {
             </>
             ) : null}
 
+            {activeView === "imports" ? (
+              <div className="panel animate-fade-in">
+                <div className="panel-header">
+                  <div>
+                    <h2>Importation de données</h2>
+                    <span>Importer des élèves à partir d'un fichier CSV</span>
+                  </div>
+                  <FileSpreadsheet size={20} />
+                </div>
+
+                {alerts.length ? (
+                  <div className="inline-alerts">
+                    {alerts.map((alert) => (
+                      <div className="alert-item" key={alert}>
+                        <AlertTriangle size={18} />
+                        <span>{alert}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="grades-workspace">
+                  <div className="settings-block">
+                    <div className="section-title">
+                      <strong>Charger un fichier CSV</strong>
+                      <span>Année scolaire active : {activeYear?.name ?? "Aucune"}</span>
+                    </div>
+
+                    <div className="setup-form">
+                      <label className="field">
+                        <span>Classe d'affectation globale (Optionnel)</span>
+                        <select
+                          disabled={importSaving}
+                          value={importClassId}
+                          onChange={(e) => setImportClassId(e.target.value)}
+                        >
+                          <option value="">-- Utiliser la colonne classe du CSV --</option>
+                          {classes.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                        <small>Si sélectionné, tous les élèves importés seront inscrits dans cette classe.</small>
+                      </label>
+
+                      <label className="field">
+                        <span className="required">Fichier CSV (.csv)</span>
+                        <input
+                          type="file"
+                          accept=".csv"
+                          disabled={importSaving}
+                          onChange={handleCsvFileChange}
+                          style={{ padding: "8px", border: "1px dashed var(--line)", borderRadius: "6px" }}
+                        />
+                        <small>Utiliser le codage UTF-8. Délimiteur "," ou ";".</small>
+                      </label>
+                    </div>
+                  </div>
+
+                  {csvHeaders.length > 0 && (
+                    <form onSubmit={handleStartImport} className="settings-block">
+                      <div className="section-title">
+                        <strong>Correspondance des colonnes (Mapping)</strong>
+                        <span>Associer les champs élèves aux colonnes de votre fichier</span>
+                      </div>
+
+                      <div className="setup-form" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                        <label className="field">
+                          <span className="required">Nom de l'élève</span>
+                          <select
+                            required
+                            value={importMapping.lastName}
+                            onChange={(e) => setImportMapping({ ...importMapping, lastName: e.target.value })}
+                          >
+                            <option value="">-- Choisir une colonne --</option>
+                            {csvHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </label>
+
+                        <label className="field">
+                          <span className="required">Prénom de l'élève</span>
+                          <select
+                            required
+                            value={importMapping.firstName}
+                            onChange={(e) => setImportMapping({ ...importMapping, firstName: e.target.value })}
+                          >
+                            <option value="">-- Choisir une colonne --</option>
+                            {csvHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </label>
+
+                        <label className="field">
+                          <span>Genre (M ou F)</span>
+                          <select
+                            value={importMapping.gender}
+                            onChange={(e) => setImportMapping({ ...importMapping, gender: e.target.value })}
+                          >
+                            <option value="">-- Aucune (Optionnel) --</option>
+                            {csvHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </label>
+
+                        <label className="field">
+                          <span>Date de naissance</span>
+                          <select
+                            value={importMapping.birthDate}
+                            onChange={(e) => setImportMapping({ ...importMapping, birthDate: e.target.value })}
+                          >
+                            <option value="">-- Aucune (Optionnel) --</option>
+                            {csvHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </label>
+
+                        <label className="field">
+                          <span>Matricule</span>
+                          <select
+                            value={importMapping.matricule}
+                            onChange={(e) => setImportMapping({ ...importMapping, matricule: e.target.value })}
+                          >
+                            <option value="">-- Auto-généré (Conseillé) --</option>
+                            {csvHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </label>
+
+                        {!importClassId && (
+                          <label className="field">
+                            <span className="required">Colonne Classe</span>
+                            <select
+                              required
+                              value={importMapping.className}
+                              onChange={(e) => setImportMapping({ ...importMapping, className: e.target.value })}
+                            >
+                              <option value="">-- Choisir la colonne contenant le nom de la classe --</option>
+                              {csvHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                            </select>
+                          </label>
+                        )}
+                      </div>
+
+                      <div style={{ marginTop: "20px" }}>
+                        <div className="section-title">
+                          <strong>Prévisualisation des données ({csvRows.length} lignes)</strong>
+                        </div>
+                        <div className="student-table-wrap" style={{ maxHeight: "250px", overflowY: "auto" }}>
+                          <table className="student-table">
+                            <thead>
+                              <tr>
+                                {csvHeaders.map(h => <th key={h}>{h}</th>)}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {csvRows.slice(0, 5).map((row, idx) => (
+                                <tr key={idx}>
+                                  {csvHeaders.map(h => <td key={h}>{row[h]}</td>)}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {csvRows.length > 5 && <div style={{ textAlign: "center", padding: "8px", fontSize: "12px", color: "var(--text-muted)" }}>... et {csvRows.length - 5} autres lignes.</div>}
+                        </div>
+                      </div>
+
+                      <button
+                        className="primary-button field full"
+                        disabled={importSaving || !importMapping.lastName || !importMapping.firstName}
+                        type="submit"
+                        style={{ marginTop: "16px" }}
+                      >
+                        {importSaving ? <Loader2 size={17} /> : <CloudUpload size={17} />}
+                        Lancer l'importation de {csvRows.length} élèves
+                      </button>
+                    </form>
+                  )}
+
+                  <div className="settings-block">
+                    <div className="section-title">
+                      <strong>Historique des importations</strong>
+                      <span>{importJobs.length} job(s) enregistré(s)</span>
+                    </div>
+
+                    {importJobs.length > 0 ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginTop: "12px" }}>
+                        {importJobs.map((job) => (
+                          <div
+                            key={job.id}
+                            style={{
+                              border: "1px solid var(--line)",
+                              borderRadius: "8px",
+                              padding: "16px",
+                              background: "var(--background-card)"
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                              <strong>{job.fileName}</strong>
+                              <span
+                                style={{
+                                  fontSize: "11px",
+                                  fontWeight: "bold",
+                                  padding: "3px 8px",
+                                  borderRadius: "12px",
+                                  background:
+                                    job.status === "success"
+                                      ? "#d1fae5"
+                                      : job.status === "completed_with_errors"
+                                      ? "#fef3c7"
+                                      : "#fee2e2",
+                                  color:
+                                    job.status === "success"
+                                      ? "#065f46"
+                                      : job.status === "completed_with_errors"
+                                      ? "#92400e"
+                                      : "#991b1b"
+                                }}
+                              >
+                                {job.status.toUpperCase().replace(/_/g, " ")}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: "12px", color: "var(--text-muted)", display: "flex", gap: "16px" }}>
+                              <span>Lignes : <strong>{job.totalRows}</strong></span>
+                              <span>Succès : <strong style={{ color: "#10b981" }}>{job.validRows}</strong></span>
+                              <span>Échecs : <strong style={{ color: "#ef4444" }}>{job.errorRows}</strong></span>
+                              <span>Le : <strong>{new Date(job.startedAt).toLocaleString("fr-FR")}</strong></span>
+                            </div>
+                            {job.errors && job.errors.length > 0 && (
+                              <div style={{ marginTop: "12px", borderTop: "1px solid var(--line)", paddingTop: "12px" }}>
+                                <span style={{ fontSize: "12px", fontWeight: "bold", color: "#b91c1c" }}>Détails des erreurs :</span>
+                                <div style={{ maxHeight: "150px", overflowY: "auto", marginTop: "6px", fontSize: "11px" }}>
+                                  {job.errors.map((err) => (
+                                    <div key={err.id} style={{ padding: "4px 0", borderBottom: "1px dashed var(--line)", color: "#991b1b" }}>
+                                      Ligne {err.rowNumber} : champ <strong>{err.field}</strong> - {err.message}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="empty-state compact">Aucun historique d'importation disponible.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {activeView === "backups" ? (() => {
+              const filteredBackups = backups.filter((job) => {
+                if (backupFilter !== "ALL" && job.status !== backupFilter) return false;
+                if (backupSearch) {
+                  const q = backupSearch.toLowerCase();
+                  const dateStr = new Date(job.startedAt).toLocaleString("fr-FR").toLowerCase();
+                  return dateStr.includes(q) || job.type.toLowerCase().includes(q) || (job.checksum || "").toLowerCase().includes(q);
+                }
+                return true;
+              });
+              const successCount = backups.filter(b => b.status === "SUCCESS").length;
+              const failedCount = backups.filter(b => b.status === "FAILED").length;
+
+              return (
+              <div className="panel animate-fade-in">
+                <div className="panel-header">
+                  <div>
+                    <h2>Sauvegardes de données</h2>
+                    <span>Historique, restauration et génération des archives</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <button
+                      className="ghost-button"
+                      disabled={backupSaving || !selected}
+                      onClick={() => selected && loadBackups(selected.id)}
+                      title="Actualiser la liste"
+                      style={{ display: "flex", alignItems: "center", gap: "5px", padding: "6px 10px", height: "auto", fontSize: "12px" }}
+                      type="button"
+                    >
+                      <RefreshCw size={13} />
+                    </button>
+                    <button
+                      className="primary-button"
+                      disabled={backupSaving || !selected}
+                      type="button"
+                      onClick={() => void handleStartBackup()}
+                      style={{ display: "flex", alignItems: "center", gap: "6px", padding: "6px 14px", height: "auto", fontSize: "12px" }}
+                    >
+                      {backupSaving ? <Loader2 size={14} className="animate-spin" /> : <CloudUpload size={14} />}
+                      Nouvelle sauvegarde
+                    </button>
+                  </div>
+                </div>
+
+                {alerts.length ? (
+                  <div className="inline-alerts">
+                    {alerts.map((alert) => (
+                      <div className="alert-item" key={alert}>
+                        <AlertTriangle size={18} />
+                        <span>{alert}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                {/* Barre de filtres */}
+                <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", padding: "12px 0" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", background: "var(--background-card)", border: "1px solid var(--line)", borderRadius: "6px", padding: "4px 10px", flex: "1", minWidth: "180px", maxWidth: "300px" }}>
+                    <Search size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                    <input
+                      type="text"
+                      placeholder="Rechercher par date..."
+                      value={backupSearch}
+                      onChange={(e) => setBackupSearch(e.target.value)}
+                      style={{ border: "none", outline: "none", background: "transparent", fontSize: "12px", width: "100%", padding: "4px 0" }}
+                    />
+                  </div>
+                  <div style={{ display: "flex", gap: "4px" }}>
+                    {(["ALL", "SUCCESS", "FAILED"] as const).map((f) => (
+                      <button
+                        key={f}
+                        type="button"
+                        onClick={() => setBackupFilter(f)}
+                        style={{
+                          padding: "4px 10px", fontSize: "11px", borderRadius: "14px", border: "1px solid var(--line)", cursor: "pointer",
+                          background: backupFilter === f ? (f === "SUCCESS" ? "#d1fae5" : f === "FAILED" ? "#fee2e2" : "var(--primary)") : "transparent",
+                          color: backupFilter === f ? (f === "SUCCESS" ? "#065f46" : f === "FAILED" ? "#991b1b" : "white") : "var(--text-muted)",
+                          fontWeight: backupFilter === f ? 600 : 400
+                        }}
+                      >
+                        {f === "ALL" ? `Tout (${backups.length})` : f === "SUCCESS" ? `Réussi (${successCount})` : `Échoué (${failedCount})`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Tableau compact */}
+                {filteredBackups.length > 0 ? (
+                  <div style={{ overflowX: "auto" }}>
+                    <table className="data-table" style={{ fontSize: "12px", width: "100%" }}>
+                      <thead>
+                        <tr>
+                          <th style={{ width: "22%" }}>Date</th>
+                          <th style={{ width: "10%" }}>Statut</th>
+                          <th style={{ width: "10%" }}>Taille</th>
+                          <th style={{ width: "10%" }}>Type</th>
+                          <th style={{ width: "8%" }}>Chiffré</th>
+                          <th style={{ width: "20%" }}>Checksum</th>
+                          <th style={{ width: "20%", textAlign: "right" }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredBackups.map((job) => (
+                          <tr key={job.id} style={{ borderBottom: "1px solid var(--line)" }}>
+                            <td style={{ padding: "8px 6px" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                <Database size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                                <span>{new Date(job.startedAt).toLocaleString("fr-FR")}</span>
+                              </div>
+                            </td>
+                            <td style={{ padding: "8px 6px" }}>
+                              <span style={{
+                                fontSize: "10px", fontWeight: 600, padding: "2px 8px", borderRadius: "10px",
+                                background: job.status === "SUCCESS" ? "#d1fae5" : job.status === "FAILED" ? "#fee2e2" : "#fef3c7",
+                                color: job.status === "SUCCESS" ? "#065f46" : job.status === "FAILED" ? "#991b1b" : "#92400e"
+                              }}>
+                                {job.status === "SUCCESS" ? "Réussi" : job.status === "FAILED" ? "Échoué" : job.status}
+                              </span>
+                            </td>
+                            <td style={{ padding: "8px 6px" }}>
+                              {job.sizeBytes ? (Number(job.sizeBytes) / 1024 / 1024).toFixed(2) + " MB" : "-"}
+                            </td>
+                            <td style={{ padding: "8px 6px", textTransform: "capitalize" }}>{job.type}</td>
+                            <td style={{ padding: "8px 6px" }}>
+                              {job.encrypted ? (
+                                <span style={{ color: "#16a34a", display: "flex", alignItems: "center", gap: "3px" }}>
+                                  <ShieldCheck size={12} /> Oui
+                                </span>
+                              ) : "Non"}
+                            </td>
+                            <td style={{ padding: "8px 6px", fontFamily: "monospace", fontSize: "10px", color: "var(--text-muted)" }}>
+                              {job.checksum ? job.checksum.slice(0, 16) + "..." : "-"}
+                            </td>
+                            <td style={{ padding: "8px 6px", textAlign: "right" }}>
+                              <div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>
+                                {job.status === "SUCCESS" && job.localPath ? (
+                                  <>
+                                    <a
+                                      href={backupDownloadUrl(selected!.id, job.id)}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      title="Télécharger"
+                                      style={{
+                                        display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                        width: "28px", height: "28px", borderRadius: "6px", border: "1px solid var(--line)",
+                                        color: "var(--primary)", textDecoration: "none", background: "transparent"
+                                      }}
+                                    >
+                                      <Download size={13} />
+                                    </a>
+                                    <button
+                                      type="button"
+                                      title="Restaurer cette sauvegarde"
+                                      disabled={restoringBackupId !== null}
+                                      onClick={() => void handleRestoreBackup(job.id)}
+                                      style={{
+                                        display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                        width: "28px", height: "28px", borderRadius: "6px", border: "1px solid #d1fae5",
+                                        color: "#16a34a", cursor: "pointer", background: restoringBackupId === job.id ? "#d1fae5" : "transparent"
+                                      }}
+                                    >
+                                      {restoringBackupId === job.id ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+                                    </button>
+                                  </>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  title="Supprimer"
+                                  onClick={() => void handleDeleteBackup(job.id)}
+                                  style={{
+                                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                    width: "28px", height: "28px", borderRadius: "6px", border: "1px solid #fee2e2",
+                                    color: "#dc2626", cursor: "pointer", background: "transparent"
+                                  }}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="empty-state compact">
+                    {backups.length === 0 ? "Aucune sauvegarde trouvée." : "Aucune sauvegarde ne correspond aux filtres."}
+                  </div>
+                )}
+
+                {/* Messages d'erreur des sauvegardes échouées (collapsible) */}
+                {filteredBackups.some(j => j.errorMessage) ? (
+                  <details style={{ marginTop: "12px", fontSize: "12px" }}>
+                    <summary style={{ cursor: "pointer", color: "#991b1b", fontWeight: 600 }}>
+                      Voir les erreurs ({filteredBackups.filter(j => j.errorMessage).length})
+                    </summary>
+                    <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "6px" }}>
+                      {filteredBackups.filter(j => j.errorMessage).map(j => (
+                        <div key={j.id} style={{ padding: "8px 12px", background: "#fef2f2", borderRadius: "6px", color: "#991b1b", fontSize: "11px" }}>
+                          <strong>{new Date(j.startedAt).toLocaleString("fr-FR")} :</strong> {j.errorMessage}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                ) : null}
+              </div>
+              );
+            })() : null}
+
+            {activeView === "roles" ? (
+              <div className="panel animate-fade-in">
+                <div className="panel-header">
+                  <div>
+                    <h2>Gestion des comptes</h2>
+                    <span>Comptes utilisateurs locaux de l'établissement et personnalisation des droits</span>
+                  </div>
+                  <ShieldCheck size={20} />
+                </div>
+
+                <div className="segmented-tabs" role="tablist" aria-label="Gestion des comptes et rôles">
+                  <button
+                    className={rolesSubTab === "users" ? "active" : ""}
+                    type="button"
+                    onClick={() => setRolesSubTab("users")}
+                  >
+                    Utilisateurs
+                  </button>
+                  <button
+                    className={rolesSubTab === "permissions" ? "active" : ""}
+                    type="button"
+                    onClick={() => setRolesSubTab("permissions")}
+                  >
+                    Droits et Rôles
+                  </button>
+                </div>
+
+                {alerts.length ? (
+                  <div className="inline-alerts">
+                    {alerts.map((alert) => (
+                      <div className="alert-item" key={alert}>
+                        <AlertTriangle size={18} />
+                        <span>{alert}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                {rolesSubTab === "users" ? (
+                  <div className="grades-workspace animate-fade-in">
+                    <form className="settings-block" onSubmit={editingUser ? handleUpdateUser : handleCreateUser}>
+                      <div className="section-title">
+                        <strong>{editingUser ? "Modifier le compte" : "Nouveau compte utilisateur"}</strong>
+                        <span>Définir l'accès et le rôle associé</span>
+                      </div>
+                      <div className="setup-form">
+                        <label className="field full">
+                          <span className="required">Nom complet</span>
+                          <input
+                            required
+                            minLength={2}
+                            placeholder="Exemple : Jean Ouédraogo"
+                            value={userForm.fullName}
+                            onChange={(e) => setUserForm({ ...userForm, fullName: e.target.value })}
+                            disabled={userSaving}
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span className="required">Adresse email</span>
+                          <input
+                            required
+                            type="email"
+                            placeholder="jean.o@schoolsaas.bf"
+                            value={userForm.email}
+                            onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
+                            disabled={userSaving || editingUser !== null}
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span>Téléphone</span>
+                          <input
+                            placeholder="70123456"
+                            value={userForm.phone}
+                            onChange={(e) => setUserForm({ ...userForm, phone: e.target.value })}
+                            disabled={userSaving}
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span className="required">Rôle</span>
+                          <select
+                            required
+                            value={userForm.roleId}
+                            onChange={(e) => setUserForm({ ...userForm, roleId: e.target.value })}
+                            disabled={userSaving}
+                          >
+                            <option value="">-- Choisir un rôle --</option>
+                            {rolesList.map((r) => (
+                              <option key={r.id} value={r.id}>
+                                {r.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="field">
+                          <span className={editingUser ? undefined : "required"}>
+                            {editingUser ? "Nouveau mot de passe (optionnel)" : "Mot de passe"}
+                          </span>
+                          <input
+                            required={!editingUser}
+                            type="password"
+                            placeholder={editingUser ? "Laisser vide pour ne pas modifier" : "••••••••"}
+                            value={userForm.password}
+                            onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+                            disabled={userSaving}
+                          />
+                        </label>
+
+                        <div className="field full" style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+                          <button className="primary-button" disabled={userSaving} type="submit">
+                            {userSaving ? <Loader2 size={17} /> : <Save size={17} />}
+                            {editingUser ? "Enregistrer" : "Créer le compte"}
+                          </button>
+                          {editingUser && (
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              onClick={() => {
+                                setEditingUser(null);
+                                setUserForm({ fullName: "", email: "", password: "", phone: "", roleId: "" });
+                              }}
+                            >
+                              Annuler
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </form>
+
+                    <div className="settings-block">
+                      <div className="section-title">
+                        <strong>Comptes existants</strong>
+                        <span>{usersList.length} utilisateur(s)</span>
+                      </div>
+                      <div className="student-table-wrap">
+                        {usersList.length > 0 ? (
+                          <table className="student-table">
+                            <thead>
+                              <tr>
+                                <th>Nom complet</th>
+                                <th>Email / Rôle</th>
+                                <th>Statut</th>
+                                <th style={{ textAlign: "right" }}>Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {usersList.map((u) => (
+                                <tr key={u.id}>
+                                  <td>
+                                    <strong>{u.fullName}</strong>
+                                    <span>{u.phone ?? "Aucun numéro"}</span>
+                                  </td>
+                                  <td>
+                                    <strong>{u.email}</strong>
+                                    <span style={{ fontSize: "11px", color: "var(--primary)", fontWeight: "bold" }}>
+                                      {u.roleName}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    <span
+                                      className={`status-badge ${u.status === "active" ? "active" : "suspended"}`}
+                                    >
+                                      {u.status === "active" ? "Actif" : "Inactif"}
+                                    </span>
+                                  </td>
+                                  <td style={{ textAlign: "right" }}>
+                                    <div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>
+                                      <button
+                                        className="ghost-button small"
+                                        type="button"
+                                        onClick={() => startEditUser(u)}
+                                      >
+                                        Modifier
+                                      </button>
+                                      {u.status === "active" && (
+                                        <button
+                                          className="ghost-button small danger-button"
+                                          type="button"
+                                          onClick={() => void handleDeleteUser(u.id)}
+                                        >
+                                          Désactiver
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        ) : (
+                          <div className="empty-state compact">Aucun compte utilisateur trouvé.</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="roles-permissions-view animate-fade-in" style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                    <div className="settings-block" style={{ width: "100%" }}>
+                      <div className="section-title">
+                        <strong>Sélectionner un rôle à personnaliser</strong>
+                        <span>Les modifications s'appliqueront à tous les utilisateurs ayant ce rôle.</span>
+                      </div>
+                      
+                      <div className="setup-form" style={{ maxWidth: "400px" }}>
+                        <label className="field full">
+                          <span className="required">Rôle à configurer</span>
+                          <select
+                            value={selectedRoleForPermissions?.id || ""}
+                            onChange={(e) => handleSelectRoleForPermissions(e.target.value)}
+                          >
+                            <option value="">-- Choisir un rôle --</option>
+                            {rolesList.map((r) => (
+                              <option key={r.id} value={r.id}>
+                                {r.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+
+                    {selectedRoleForPermissions ? (
+                      selectedRoleForPermissions.code === "establishment_admin" ? (
+                        <div className="settings-block">
+                          <div className="alert-item" style={{ background: "var(--background)", color: "var(--text)", padding: "16px", borderRadius: "8px", border: "1px solid var(--border)", display: "flex", gap: "12px", alignItems: "center" }}>
+                            <ShieldCheck size={24} style={{ color: "var(--success)" }} />
+                            <div>
+                              <strong style={{ display: "block", marginBottom: "4px" }}>Rôle Administrateur Système</strong>
+                              <span style={{ fontSize: "13px", color: "var(--text-muted)" }}>
+                                Le rôle Administrateur Établissement possède toutes les permissions de la plateforme par défaut. Ses droits ne peuvent pas être restreints pour éviter de bloquer l'administration de l'établissement.
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="settings-block" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+                          <div className="section-title" style={{ borderBottom: "1px solid var(--border)", paddingBottom: "16px", marginBottom: "8px" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", flexWrap: "wrap", gap: "12px" }}>
+                              <div>
+                                <strong>Permissions pour le rôle : {selectedRoleForPermissions.name}</strong>
+                                <span>Cochez les modules et actions autorisés pour ce rôle</span>
+                              </div>
+                              <button
+                                className="primary-button"
+                                type="button"
+                                disabled={permissionsSaving}
+                                onClick={handleSaveRolePermissions}
+                              >
+                                {permissionsSaving ? <Loader2 size={17} className="animate-spin" /> : <Save size={17} />}
+                                Enregistrer les droits
+                              </button>
+                            </div>
+                          </div>
+
+                          <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                            {PERMISSION_GROUPS.map((group) => (
+                              <div key={group.category} style={{ borderBottom: "1px solid var(--border-light)", paddingBottom: "16px" }}>
+                                <h3 style={{ fontSize: "14px", fontWeight: "bold", color: "var(--text)", marginBottom: "12px", display: "flex", alignItems: "center", gap: "6px" }}>
+                                  <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--primary)" }}></span>
+                                  {group.category}
+                                </h3>
+                                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "12px" }}>
+                                  {group.permissions.map((perm) => {
+                                    const isChecked = selectedPermissions.includes(perm.code);
+                                    return (
+                                      <label
+                                        key={perm.code}
+                                        style={{
+                                          display: "flex",
+                                          gap: "10px",
+                                          padding: "10px 12px",
+                                          borderRadius: "6px",
+                                          border: `1px solid ${isChecked ? "var(--primary)" : "var(--border)"}`,
+                                          background: isChecked ? "rgba(15, 23, 42, 0.03)" : "var(--background)",
+                                          cursor: "pointer",
+                                          transition: "all 0.2s"
+                                        }}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={isChecked}
+                                          onChange={() => handleTogglePermission(perm.code)}
+                                          style={{ marginTop: "3px" }}
+                                        />
+                                        <div>
+                                          <strong style={{ display: "block", fontSize: "13px", color: "var(--text)" }}>{perm.label}</strong>
+                                          <span style={{ display: "block", fontSize: "11px", color: "var(--text-muted)", marginTop: "2px", lineHeight: "1.4" }}>
+                                            {perm.description}
+                                          </span>
+                                        </div>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "12px" }}>
+                            <button
+                              className="primary-button"
+                              type="button"
+                              disabled={permissionsSaving}
+                              onClick={handleSaveRolePermissions}
+                            >
+                              {permissionsSaving ? <Loader2 size={17} className="animate-spin" /> : <Save size={17} />}
+                              Enregistrer les droits
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    ) : (
+                      <div className="empty-state">
+                        Sélectionnez un rôle ci-dessus pour personnaliser ses droits d'accès.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : null}
+
+            {activeView === "super-admin" && currentUser.roleCode === "platform_super_admin" ? (
+              <SuperAdminPanel
+                establishments={establishments}
+                currentUser={currentUser}
+                onRefresh={() => void loadEstablishments()}
+              />
+            ) : null}
+
+            {activeView === "audit-logs" ? (
+              <AuditLogsPanel
+                currentUser={currentUser}
+                selectedEstablishmentId={currentUser.roleCode === "platform_super_admin" ? undefined : selectedId}
+              />
+            ) : null}
+
             {activeView !== "dashboard" &&
             activeView !== "settings" &&
             activeView !== "structure" &&
             activeView !== "students" &&
             activeView !== "documents" &&
             activeView !== "teachers" &&
-            activeView !== "payments" ? (
+            activeView !== "payments" &&
+            activeView !== "grades" &&
+            activeView !== "imports" &&
+            activeView !== "backups" &&
+            activeView !== "roles" &&
+            activeView !== "super-admin" &&
+            activeView !== "audit-logs" ? (
               <ComingSoonView view={activeView} />
             ) : null}
+
           </section>
 
           {activeView === "dashboard" ? (
@@ -4666,6 +6935,160 @@ export function SchoolDashboard() {
           ) : null}
         </div>
       </section>
+
+      {showPasswordModal ? (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(15, 23, 42, 0.6)",
+          backdropFilter: "blur(6px)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          zIndex: 9999, padding: "16px"
+        }}>
+          <div style={{
+            background: "#ffffff",
+            border: "1px solid #e2e8f0",
+            borderRadius: "12px",
+            width: "100%", maxWidth: "420px",
+            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+            overflow: "hidden"
+          }}>
+            <div style={{
+              background: "linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)",
+              padding: "20px 24px", color: "white",
+              display: "flex", alignItems: "center", justifyContent: "space-between"
+            }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#ffffff" }}>Sécurité du compte</h3>
+                <span style={{ fontSize: "11px", color: "#c7d2fe" }}>Changement de mot de passe</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPasswordModal(false)}
+                style={{ background: "none", border: "none", color: "#c7d2fe", cursor: "pointer", fontSize: "22px", fontWeight: "bold" }}
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={handleSelfChangePassword} style={{ padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
+              {pwError && (
+                <div style={{ padding: "10px 14px", background: "#fef2f2", border: "1px solid #fee2e2", color: "#991b1b", borderRadius: "6px", fontSize: "12px", fontWeight: 500 }}>
+                  {pwError}
+                </div>
+              )}
+              {pwSuccess && (
+                <div style={{ padding: "10px 14px", background: "#ecfdf5", border: "1px solid #d1fae5", color: "#065f46", borderRadius: "6px", fontSize: "12px", fontWeight: 500 }}>
+                  {pwSuccess}
+                </div>
+              )}
+
+              <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                <span className="required">Mot de passe actuel</span>
+                <input
+                  required
+                  type="password"
+                  placeholder="••••••••"
+                  value={pwForm.currentPassword}
+                  onChange={e => setPwForm({ ...pwForm, currentPassword: e.target.value })}
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: "6px",
+                    border: "1.5px solid #cbd5e1",
+                    background: "#f8fafc",
+                    color: "#0f172a",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    outline: "none"
+                  }}
+                />
+              </label>
+
+              <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                <span className="required">Nouveau mot de passe</span>
+                <input
+                  required
+                  type="password"
+                  placeholder="••••••••"
+                  value={pwForm.newPassword}
+                  onChange={e => setPwForm({ ...pwForm, newPassword: e.target.value })}
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: "6px",
+                    border: "1.5px solid #cbd5e1",
+                    background: "#f8fafc",
+                    color: "#0f172a",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    outline: "none"
+                  }}
+                />
+              </label>
+
+              <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                <span className="required">Confirmer le nouveau mot de passe</span>
+                <input
+                  required
+                  type="password"
+                  placeholder="••••••••"
+                  value={pwForm.confirmPassword}
+                  onChange={e => setPwForm({ ...pwForm, confirmPassword: e.target.value })}
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: "6px",
+                    border: "1.5px solid #cbd5e1",
+                    background: "#f8fafc",
+                    color: "#0f172a",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    outline: "none"
+                  }}
+                />
+              </label>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "12px" }}>
+                <button
+                  type="button"
+                  onClick={() => setShowPasswordModal(false)}
+                  style={{
+                    height: "38px",
+                    padding: "0 16px",
+                    borderRadius: "6px",
+                    border: "1.5px solid #cbd5e1",
+                    background: "#f1f5f9",
+                    color: "#334155",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    cursor: "pointer"
+                  }}
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={pwSaving}
+                  style={{
+                    height: "38px",
+                    padding: "0 16px",
+                    borderRadius: "6px",
+                    border: "none",
+                    background: "#15803d",
+                    color: "#ffffff",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px"
+                  }}
+                >
+                  {pwSaving ? <Loader2 size={14} className="animate-spin" /> : null}
+                  Enregistrer
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -4936,6 +7359,14 @@ function ComingSoonView({ view }: { view: AppView }) {
     roles: {
       title: "Roles",
       detail: "Permissions et journal d'activite"
+    },
+    "audit-logs": {
+      title: "Journal d'activite",
+      detail: "Historique des actions sur la plateforme"
+    },
+    "super-admin": {
+      title: "Gestion globale",
+      detail: "Administration Super Admin"
     }
   };
 
@@ -5005,6 +7436,1155 @@ function TimelineItem({
         <strong>{title}</strong>
         <span>{detail}</span>
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// COMPOSANT SUPER ADMIN PANEL
+// ═══════════════════════════════════════════════════════════════════════
+function SuperAdminPanel({
+  establishments,
+  currentUser,
+  onRefresh
+}: {
+  establishments: Establishment[];
+  currentUser: AuthUser;
+  onRefresh: () => void;
+}) {
+  const [stats, setStats] = useState<PlatformStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<"overview" | "establishments" | "licenses" | "modules" | "accounts">("overview");
+  const [selectedEstab, setSelectedEstab] = useState<Establishment | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [alert, setAlert] = useState<string>("");
+  const [licenseForm, setLicenseForm] = useState({ planCode: "", status: "", expiresAt: "", maxStudents: "" });
+
+  // États pour la création de compte admin d'établissement
+  const [accountEstabId, setAccountEstabId] = useState("");
+  const [accountForm, setAccountForm] = useState({ fullName: "", email: "", password: "", phone: "" });
+  const [accountSaving, setAccountSaving] = useState(false);
+  const [accountUsers, setAccountUsers] = useState<any[]>([]);
+  const [accountRoles, setAccountRoles] = useState<any[]>([]);
+  const [accountRoleId, setAccountRoleId] = useState("");
+
+  useEffect(() => {
+    void loadStats();
+  }, []);
+
+  async function loadStats() {
+    setLoading(true);
+    try {
+      const s = await getPlatformStats();
+      setStats(s);
+    } catch {
+      setAlert("Impossible de charger les statistiques de la plateforme.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleUpdateLicense() {
+    if (!selectedEstab) return;
+    setActionLoading(true);
+    try {
+      await updateEstablishmentLicense(selectedEstab.id, {
+        planCode: licenseForm.planCode || undefined,
+        status: licenseForm.status || undefined,
+        expiresAt: licenseForm.expiresAt || undefined,
+        maxStudents: licenseForm.maxStudents ? parseInt(licenseForm.maxStudents) : undefined
+      });
+      setAlert("✅ Licence mise à jour avec succès.");
+      onRefresh();
+    } catch {
+      setAlert("❌ Erreur lors de la mise à jour de la licence.");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleUpdateStatus(establishmentId: string, status: string) {
+    setActionLoading(true);
+    try {
+      await updateEstablishmentStatus(establishmentId, status, "Action Super Admin");
+      setAlert(`✅ Statut mis à jour : ${status}`);
+      onRefresh();
+    } catch {
+      setAlert("❌ Erreur lors de la mise à jour du statut.");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleToggleModule(establishmentId: string, moduleCode: string, enabled: boolean) {
+    setActionLoading(true);
+    try {
+      await toggleEstablishmentModule(establishmentId, moduleCode, enabled);
+      setAlert(`✅ Module ${moduleCode} ${enabled ? "activé" : "désactivé"}.`);
+      onRefresh();
+    } catch {
+      setAlert("❌ Erreur lors de la modification du module.");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  const licenseStatusColor = (status: string) => {
+    if (status === "ACTIVE") return { bg: "#d1fae5", color: "#065f46" };
+    if (status === "TRIAL") return { bg: "#fef3c7", color: "#92400e" };
+    if (status === "EXPIRED") return { bg: "#fee2e2", color: "#991b1b" };
+    if (status === "SUSPENDED") return { bg: "#f3f4f6", color: "#374151" };
+    return { bg: "#e5e7eb", color: "#6b7280" };
+  };
+
+  // Chargement des comptes d'un établissement sélectionné
+  async function loadAccountsForEstab(estabId: string) {
+    if (!estabId) { setAccountUsers([]); setAccountRoles([]); return; }
+    try {
+      const [users, roles] = await Promise.all([
+        getEstablishmentUsers(estabId),
+        getEstablishmentRoles(estabId)
+      ]);
+      setAccountUsers(users);
+      setAccountRoles(roles);
+      // Sélectionner le premier rôle disponible par défaut (typiquement admin)
+      if (roles.length > 0 && !accountRoleId) setAccountRoleId(roles[0].id);
+    } catch {
+      setAccountUsers([]);
+      setAccountRoles([]);
+    }
+  }
+
+  async function handleCreateAccountForEstab(e: React.FormEvent) {
+    e.preventDefault();
+    if (!accountEstabId || !accountRoleId) {
+      setAlert("❌ Sélectionnez un établissement et un rôle.");
+      return;
+    }
+    setAccountSaving(true);
+    try {
+      await createEstablishmentUser(accountEstabId, {
+        ...accountForm,
+        roleId: accountRoleId
+      });
+      setAlert("✅ Compte créé avec succès ! L'utilisateur peut maintenant se connecter.");
+      setAccountForm({ fullName: "", email: "", password: "", phone: "" });
+      await loadAccountsForEstab(accountEstabId);
+    } catch (err: any) {
+      setAlert("❌ Erreur : " + (err?.message ?? "Création échouée"));
+    } finally {
+      setAccountSaving(false);
+    }
+  }
+
+  const tabs = [
+    { id: "overview", label: "Vue d'ensemble", icon: TrendingUp },
+    { id: "establishments", label: "\u00c9tablissements", icon: Building2 },
+    { id: "licenses", label: "Licences", icon: Globe },
+    { id: "modules", label: "Modules", icon: Settings },
+    { id: "accounts", label: "Comptes \u00c9tablissements", icon: Users }
+  ] as const;
+
+  return (
+    <div className="panel animate-fade-in" style={{ minHeight: "80vh" }}>
+      {/* En-tête Super Admin */}
+      <div style={{
+        background: "linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4338ca 100%)",
+        borderRadius: "12px",
+        padding: "28px 32px",
+        marginBottom: "24px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: "16px"
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <div style={{
+            width: "52px", height: "52px", borderRadius: "14px",
+            background: "rgba(255,255,255,0.15)",
+            display: "flex", alignItems: "center", justifyContent: "center"
+          }}>
+            <Crown size={26} color="#fbbf24" />
+          </div>
+          <div>
+            <h2 style={{ color: "#fff", margin: 0, fontSize: "20px", fontWeight: 700 }}>Panel Super Admin</h2>
+            <p style={{ color: "#a5b4fc", margin: 0, fontSize: "13px" }}>Gestion globale de la plateforme SchoolSaaS BF</p>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button
+            type="button"
+            onClick={() => { void loadStats(); onRefresh(); }}
+            style={{
+              background: "#ffffff",
+              color: "#1e1b4b",
+              border: "1px solid #ffffff",
+              fontSize: "12px",
+              fontWeight: 700,
+              height: "auto",
+              padding: "8px 16px",
+              borderRadius: "6px",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.15)"
+            }}
+          >
+            <RefreshCw size={14} />
+            Actualiser
+          </button>
+        </div>
+      </div>
+
+      {alert ? (
+        <div style={{
+          padding: "10px 16px", borderRadius: "8px", marginBottom: "16px", fontSize: "13px",
+          background: alert.startsWith("✅") ? "#d1fae5" : "#fee2e2",
+          color: alert.startsWith("✅") ? "#065f46" : "#991b1b",
+          display: "flex", alignItems: "center", justifyContent: "space-between"
+        }}>
+          <span>{alert}</span>
+          <button type="button" onClick={() => setAlert("")} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "16px" }}>×</button>
+        </div>
+      ) : null}
+
+      {/* Onglets navigation */}
+      <div style={{ display: "flex", gap: "4px", marginBottom: "24px", borderBottom: "2px solid var(--line)", paddingBottom: "0" }}>
+        {tabs.map(tab => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                display: "flex", alignItems: "center", gap: "6px",
+                padding: "10px 16px", border: "none", cursor: "pointer",
+                fontSize: "13px", fontWeight: isActive ? 600 : 400,
+                background: "transparent",
+                color: isActive ? "var(--primary)" : "var(--text-muted)",
+                borderBottom: isActive ? "2px solid var(--primary)" : "2px solid transparent",
+                marginBottom: "-2px", transition: "all 0.15s"
+              }}
+            >
+              <Icon size={15} />
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── VUE D'ENSEMBLE ── */}
+      {activeTab === "overview" ? (
+        <div>
+          {loading ? (
+            <div style={{ textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
+              <Loader2 size={28} className="animate-spin" style={{ marginBottom: 8 }} />
+              <p>Chargement des statistiques...</p>
+            </div>
+          ) : stats ? (
+            <>
+              {/* KPI Cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "16px", marginBottom: "28px" }}>
+                {[
+                  { label: "Établissements", value: stats.totalEstablishments, color: "#4f46e5", icon: Building2 },
+                  { label: "Élèves totaux", value: stats.totalStudents, color: "#059669", icon: GraduationCap },
+                  { label: "Utilisateurs", value: stats.totalUsers, color: "#d97706", icon: Users },
+                  { label: "Sauvegardes /7j", value: stats.recentBackupsThisWeek, color: "#7c3aed", icon: Database }
+                ].map(kpi => {
+                  const KpiIcon = kpi.icon;
+                  return (
+                    <div key={kpi.label} style={{
+                      background: "var(--background-card)",
+                      border: "1px solid var(--line)",
+                      borderRadius: "12px",
+                      padding: "20px",
+                      position: "relative",
+                      overflow: "hidden"
+                    }}>
+                      <div style={{
+                        position: "absolute", top: "12px", right: "12px",
+                        width: "36px", height: "36px", borderRadius: "8px",
+                        background: kpi.color + "18",
+                        display: "flex", alignItems: "center", justifyContent: "center"
+                      }}>
+                        <KpiIcon size={18} color={kpi.color} />
+                      </div>
+                      <p style={{ margin: 0, fontSize: "11px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{kpi.label}</p>
+                      <p style={{ margin: "8px 0 0", fontSize: "28px", fontWeight: 700, color: kpi.color }}>{kpi.value.toLocaleString()}</p>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Répartition licences */}
+              <div style={{ background: "var(--background-card)", border: "1px solid var(--line)", borderRadius: "12px", padding: "20px" }}>
+                <h3 style={{ margin: "0 0 16px", fontSize: "14px", fontWeight: 600 }}>Répartition des licences</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px" }}>
+                  {[
+                    { label: "Essai (Trial)", value: stats.licenses.trial, bg: "#fef3c7", color: "#92400e" },
+                    { label: "Actives", value: stats.licenses.active, bg: "#d1fae5", color: "#065f46" },
+                    { label: "Expirées", value: stats.licenses.expired, bg: "#fee2e2", color: "#991b1b" },
+                    { label: "Suspendues", value: stats.licenses.suspended, bg: "#f3f4f6", color: "#374151" }
+                  ].map(lic => (
+                    <div key={lic.label} style={{ textAlign: "center", padding: "16px", borderRadius: "8px", background: lic.bg }}>
+                      <p style={{ margin: 0, fontSize: "24px", fontWeight: 700, color: lic.color }}>{lic.value}</p>
+                      <p style={{ margin: "4px 0 0", fontSize: "11px", color: lic.color, fontWeight: 500 }}>{lic.label}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* ── LISTE ÉTABLISSEMENTS ── */}
+      {activeTab === "establishments" ? (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
+            <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 600 }}>{establishments.length} établissement(s)</h3>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            {establishments.map(estab => {
+              const license = estab.licenses?.[0];
+              const licColors = licenseStatusColor(license?.status ?? "TRIAL");
+              return (
+                <div key={estab.id} style={{
+                  background: "var(--background-card)",
+                  border: "1px solid var(--line)",
+                  borderRadius: "10px",
+                  padding: "14px 18px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  flexWrap: "wrap",
+                  gap: "10px"
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                    <div style={{
+                      width: "40px", height: "40px", borderRadius: "8px",
+                      background: "linear-gradient(135deg, #4f46e5, #7c3aed)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      color: "white", fontWeight: 700, fontSize: "16px", flexShrink: 0
+                    }}>
+                      {estab.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <p style={{ margin: 0, fontWeight: 600, fontSize: "14px" }}>{estab.name}</p>
+                      <p style={{ margin: 0, fontSize: "11px", color: "var(--text-muted)" }}>
+                        {estab.city ?? "Ville N/A"} · {estab.type}
+                      </p>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                    {license ? (
+                      <span style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "12px", fontWeight: 600, background: licColors.bg, color: licColors.color }}>
+                        {license.planCode.toUpperCase()} · {license.status}
+                      </span>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedEstab(estab);
+                        setLicenseForm({
+                          planCode: license?.planCode ?? "",
+                          status: license?.status ?? "",
+                          expiresAt: "",
+                          maxStudents: ""
+                        });
+                        setActiveTab("licenses");
+                      }}
+                      style={{ fontSize: "11px", padding: "4px 10px", borderRadius: "6px", border: "1px solid var(--line)", background: "transparent", cursor: "pointer" }}
+                    >
+                      Gérer licence
+                    </button>
+                    {license?.status !== "SUSPENDED" ? (
+                      <button
+                        type="button"
+                        disabled={actionLoading}
+                        onClick={() => void handleUpdateStatus(estab.id, "SUSPENDED")}
+                        style={{
+                          fontSize: "11px", padding: "4px 10px", borderRadius: "6px",
+                          border: "1px solid #fee2e2", background: "transparent",
+                          cursor: "pointer", color: "#dc2626",
+                          display: "flex", alignItems: "center", gap: "4px"
+                        }}
+                      >
+                        <Lock size={11} />
+                        Suspendre
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={actionLoading}
+                        onClick={() => void handleUpdateStatus(estab.id, "ACTIVE")}
+                        style={{
+                          fontSize: "11px", padding: "4px 10px", borderRadius: "6px",
+                          border: "1px solid #d1fae5", background: "transparent",
+                          cursor: "pointer", color: "#059669",
+                          display: "flex", alignItems: "center", gap: "4px"
+                        }}
+                      >
+                        <Power size={11} />
+                        Réactiver
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── GESTION LICENCES ── */}
+      {activeTab === "licenses" ? (
+        <div style={{ animation: "fadeIn 0.3s ease-out" }}>
+          <div style={{
+            background: "#ffffff",
+            border: "1px solid #e2e8f0",
+            borderRadius: "16px",
+            padding: "24px",
+            boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.025)",
+            marginBottom: "24px"
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
+              <div style={{ width: "36px", height: "36px", borderRadius: "10px", background: "#e0e7ff", display: "flex", alignItems: "center", justifyContent: "center", color: "#4f46e5" }}>
+                <Building2 size={18} />
+              </div>
+              <div>
+                <h4 style={{ margin: 0, fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>Sélection de l'établissement</h4>
+                <p style={{ margin: 0, fontSize: "11px", color: "#64748b" }}>Choisissez l'école pour configurer ses droits d'accès</p>
+              </div>
+            </div>
+
+            <select
+              style={{
+                padding: "10px 16px",
+                borderRadius: "8px",
+                border: "1.5px solid #cbd5e1",
+                background: "#ffffff",
+                color: "#0f172a",
+                fontSize: "13px",
+                fontWeight: 600,
+                width: "100%",
+                maxWidth: "420px",
+                outline: "none",
+                cursor: "pointer",
+                boxShadow: "0 1px 2px rgba(0,0,0,0.05)"
+              }}
+              value={selectedEstab?.id ?? ""}
+              onChange={e => {
+                const found = establishments.find(es => es.id === e.target.value) ?? null;
+                setSelectedEstab(found);
+                const lic = found?.licenses?.[0];
+                setLicenseForm({ planCode: lic?.planCode ?? "", status: lic?.status ?? "", expiresAt: "", maxStudents: "" });
+              }}
+            >
+              <option value="">-- Sélectionner un établissement --</option>
+              {establishments.map(es => (
+                <option key={es.id} value={es.id}>{es.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {selectedEstab ? (
+            <div style={{
+              background: "#ffffff",
+              border: "1px solid #e2e8f0",
+              borderRadius: "16px",
+              padding: "28px",
+              boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025)",
+              maxWidth: "560px",
+              animation: "fadeIn 0.3s ease-out"
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px", borderBottom: "1px solid #f1f5f9", paddingBottom: "16px" }}>
+                <Globe size={18} color="#4f46e5" />
+                <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#0f172a" }}>
+                  Modifier la licence — {selectedEstab.name}
+                </h3>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "18px" }}>
+                <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                  <span>Plan de souscription</span>
+                  <select
+                    value={licenseForm.planCode}
+                    onChange={e => setLicenseForm({ ...licenseForm, planCode: e.target.value })}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: "8px",
+                      border: "1.5px solid #cbd5e1",
+                      background: "#f8fafc",
+                      color: "#0f172a",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      outline: "none"
+                    }}
+                  >
+                    <option value="">Inchangé</option>
+                    <option value="trial">Trial (Démo)</option>
+                    <option value="basic">Basic</option>
+                    <option value="standard">Standard</option>
+                    <option value="premium">Premium</option>
+                  </select>
+                </label>
+
+                <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                  <span>Statut actuel</span>
+                  <select
+                    value={licenseForm.status}
+                    onChange={e => setLicenseForm({ ...licenseForm, status: e.target.value })}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: "8px",
+                      border: "1.5px solid #cbd5e1",
+                      background: "#f8fafc",
+                      color: "#0f172a",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      outline: "none"
+                    }}
+                  >
+                    <option value="">Inchangé</option>
+                    <option value="TRIAL">TRIAL</option>
+                    <option value="ACTIVE">ACTIVE</option>
+                    <option value="EXPIRED">EXPIRED</option>
+                    <option value="SUSPENDED">SUSPENDED</option>
+                  </select>
+                </label>
+
+                <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                  <span>Date d'expiration</span>
+                  <input
+                    type="date"
+                    value={licenseForm.expiresAt}
+                    onChange={e => setLicenseForm({ ...licenseForm, expiresAt: e.target.value })}
+                    style={{
+                      padding: "9px 14px",
+                      borderRadius: "8px",
+                      border: "1.5px solid #cbd5e1",
+                      background: "#f8fafc",
+                      color: "#0f172a",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      outline: "none"
+                    }}
+                  />
+                </label>
+
+                <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                  <span>Nombre max d'élèves</span>
+                  <input
+                    type="number"
+                    min={0}
+                    placeholder="Illimité"
+                    value={licenseForm.maxStudents}
+                    onChange={e => setLicenseForm({ ...licenseForm, maxStudents: e.target.value })}
+                    style={{
+                      padding: "9px 14px",
+                      borderRadius: "8px",
+                      border: "1.5px solid #cbd5e1",
+                      background: "#f8fafc",
+                      color: "#0f172a",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      outline: "none"
+                    }}
+                  />
+                </label>
+              </div>
+
+              <button
+                type="button"
+                disabled={actionLoading}
+                onClick={() => void handleUpdateLicense()}
+                style={{
+                  marginTop: "24px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "8px",
+                  padding: "10px 24px",
+                  height: "auto",
+                  fontSize: "13px",
+                  fontWeight: 700,
+                  color: "#ffffff",
+                  background: "linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)",
+                  border: "none",
+                  borderRadius: "8px",
+                  cursor: "pointer",
+                  boxShadow: "0 4px 6px -1px rgba(79, 70, 229, 0.2), 0 2px 4px -1px rgba(79, 70, 229, 0.1)",
+                  transition: "transform 0.1s ease"
+                }}
+              >
+                {actionLoading ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                Enregistrer les modifications
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* ── GESTION MODULES ── */}
+      {activeTab === "modules" ? (
+        <div>
+          <div style={{ marginBottom: "16px" }}>
+            <label style={{ fontSize: "13px", fontWeight: 500, display: "block", marginBottom: "6px" }}>Établissement</label>
+            <select
+              style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "13px", width: "100%", maxWidth: "400px" }}
+              value={selectedEstab?.id ?? ""}
+              onChange={e => setSelectedEstab(establishments.find(es => es.id === e.target.value) ?? null)}
+            >
+              <option value="">-- Sélectionner un établissement --</option>
+              {establishments.map(es => (
+                <option key={es.id} value={es.id}>{es.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {selectedEstab ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "12px" }}>
+              {(selectedEstab.modules ?? []).map(mod => (
+                <div key={mod.moduleCode} style={{
+                  background: "var(--background-card)", border: "1px solid var(--line)",
+                  borderRadius: "10px", padding: "16px",
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  gap: "8px"
+                }}>
+                  <div>
+                    <p style={{ margin: 0, fontWeight: 600, fontSize: "13px" }}>{mod.moduleCode}</p>
+                    <p style={{ margin: 0, fontSize: "11px", color: mod.enabled ? "#059669" : "var(--text-muted)" }}>
+                      {mod.enabled ? "Activé" : "Désactivé"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={actionLoading}
+                    onClick={() => void handleToggleModule(selectedEstab.id, mod.moduleCode, !mod.enabled)}
+                    style={{
+                      background: "none", border: "none", cursor: "pointer",
+                      color: mod.enabled ? "#059669" : "var(--text-muted)"
+                    }}
+                  >
+                    {mod.enabled ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state compact">Sélectionnez un établissement pour gérer ses modules.</div>
+          )}
+        </div>
+      ) : null}
+
+      {/* ── COMPTES ÉTABLISSEMENTS ── */}
+      {activeTab === "accounts" ? (
+        <div style={{ animation: "fadeIn 0.3s ease-out" }}>
+          <div style={{
+            background: "#ffffff",
+            border: "1px solid #e2e8f0",
+            borderRadius: "16px",
+            padding: "24px",
+            boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.025)",
+            marginBottom: "24px"
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
+              <div style={{ width: "36px", height: "36px", borderRadius: "10px", background: "#e0e7ff", display: "flex", alignItems: "center", justifyContent: "center", color: "#4f46e5" }}>
+                <Building2 size={18} />
+              </div>
+              <div>
+                <h4 style={{ margin: 0, fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>Sélection de l'établissement</h4>
+                <p style={{ margin: 0, fontSize: "11px", color: "#64748b" }}>Choisissez l'école pour créer et lier des comptes administrateurs</p>
+              </div>
+            </div>
+
+            <select
+              style={{
+                padding: "10px 16px",
+                borderRadius: "8px",
+                border: "1.5px solid #cbd5e1",
+                background: "#ffffff",
+                color: "#0f172a",
+                fontSize: "13px",
+                fontWeight: 600,
+                width: "100%",
+                maxWidth: "420px",
+                outline: "none",
+                cursor: "pointer",
+                boxShadow: "0 1px 2px rgba(0,0,0,0.05)"
+              }}
+              value={accountEstabId}
+              onChange={e => {
+                setAccountEstabId(e.target.value);
+                setAccountRoleId("");
+                void loadAccountsForEstab(e.target.value);
+              }}
+            >
+              <option value="">-- Choisir un établissement --</option>
+              {establishments.map(e => (
+                <option key={e.id} value={e.id}>{e.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {accountEstabId ? (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "28px", alignItems: "start" }}>
+              {/* Formulaire de création */}
+              <form onSubmit={handleCreateAccountForEstab} style={{
+                background: "#ffffff",
+                border: "1px solid #e2e8f0",
+                borderRadius: "16px",
+                padding: "28px",
+                boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "18px"
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", borderBottom: "1px solid #f1f5f9", paddingBottom: "16px", marginBottom: "4px" }}>
+                  <UserPlus size={18} color="#059669" />
+                  <h4 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#0f172a" }}>Nouveau compte utilisateur</h4>
+                </div>
+
+                <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                  <span>Nom complet *</span>
+                  <input
+                    required
+                    type="text"
+                    placeholder="Ex: Jean Ouedraogo"
+                    value={accountForm.fullName}
+                    onChange={e => setAccountForm({ ...accountForm, fullName: e.target.value })}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: "8px",
+                      border: "1.5px solid #cbd5e1",
+                      background: "#f8fafc",
+                      color: "#0f172a",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      outline: "none"
+                    }}
+                  />
+                </label>
+
+                <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                  <span>Adresse email *</span>
+                  <input
+                    required
+                    type="email"
+                    placeholder="admin@etablissement.bf"
+                    value={accountForm.email}
+                    onChange={e => setAccountForm({ ...accountForm, email: e.target.value })}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: "8px",
+                      border: "1.5px solid #cbd5e1",
+                      background: "#f8fafc",
+                      color: "#0f172a",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      outline: "none"
+                    }}
+                  />
+                </label>
+
+                <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                  <span>Mot de passe initial *</span>
+                  <input
+                    required
+                    type="password"
+                    placeholder="Min. 6 caractères"
+                    value={accountForm.password}
+                    onChange={e => setAccountForm({ ...accountForm, password: e.target.value })}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: "8px",
+                      border: "1.5px solid #cbd5e1",
+                      background: "#f8fafc",
+                      color: "#0f172a",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      outline: "none"
+                    }}
+                  />
+                </label>
+
+                <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                  <span>Numéro de téléphone</span>
+                  <input
+                    type="tel"
+                    placeholder="Ex: 70 12 34 56"
+                    value={accountForm.phone}
+                    onChange={e => setAccountForm({ ...accountForm, phone: e.target.value })}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: "8px",
+                      border: "1.5px solid #cbd5e1",
+                      background: "#f8fafc",
+                      color: "#0f172a",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      outline: "none"
+                    }}
+                  />
+                </label>
+
+                <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                  <span>Rôle d'établissement *</span>
+                  <select
+                    required
+                    value={accountRoleId}
+                    onChange={e => setAccountRoleId(e.target.value)}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: "8px",
+                      border: "1.5px solid #cbd5e1",
+                      background: "#f8fafc",
+                      color: "#0f172a",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      outline: "none"
+                    }}
+                  >
+                    <option value="">-- Choisir un rôle --</option>
+                    {accountRoles.map(r => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
+                  {accountRoles.length === 0 && (
+                    <span style={{ fontSize: "11px", color: "#d97706", marginTop: "4px", fontWeight: 500 }}>
+                      ⚠️ Aucun rôle trouvé pour cet établissement. L'admin local doit d'abord créer des rôles.
+                    </span>
+                  )}
+                </label>
+
+                <button
+                  type="submit"
+                  disabled={accountSaving}
+                  style={{
+                    height: "40px",
+                    fontSize: "13px",
+                    fontWeight: 700,
+                    color: "#ffffff",
+                    background: "linear-gradient(135deg, #059669 0%, #10b981 100%)",
+                    border: "none",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "6px",
+                    boxShadow: "0 4px 6px -1px rgba(16, 185, 129, 0.2), 0 2px 4px -1px rgba(16, 185, 129, 0.1)",
+                    marginTop: "8px"
+                  }}
+                >
+                  {accountSaving ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
+                  Créer le compte utilisateur
+                </button>
+              </form>
+
+              {/* Liste des comptes existants */}
+              <div style={{
+                background: "#ffffff",
+                border: "1px solid #e2e8f0",
+                borderRadius: "16px",
+                padding: "28px",
+                boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025)"
+              }}>
+                <h4 style={{ margin: "0 0 16px", fontSize: "15px", fontWeight: 700, color: "#0f172a", borderBottom: "1px solid #f1f5f9", paddingBottom: "16px" }}>
+                  Comptes existants ({accountUsers.length})
+                </h4>
+                {accountUsers.length === 0 ? (
+                  <div className="empty-state compact" style={{ padding: "40px 20px" }}>
+                    Aucun compte utilisateur actif pour cet établissement.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "460px", overflowY: "auto", paddingRight: "4px" }}>
+                    {accountUsers.map(u => {
+                      // Initiales pour l'avatar
+                      const initials = u.fullName ? u.fullName.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase() : "U";
+                      return (
+                        <div key={u.id} style={{
+                          padding: "12px 16px",
+                          borderRadius: "10px",
+                          border: "1px solid #e2e8f0",
+                          background: "#f8fafc",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: "12px"
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                            <div style={{
+                              width: "36px",
+                              height: "36px",
+                              borderRadius: "50%",
+                              background: "linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)",
+                              color: "#ffffff",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: "12px",
+                              fontWeight: 700
+                            }}>
+                              {initials}
+                            </div>
+                            <div>
+                              <div style={{ fontSize: "13px", fontWeight: 700, color: "#0f172a" }}>{u.fullName}</div>
+                              <div style={{ fontSize: "11px", color: "#64748b" }}>{u.email}</div>
+                              <div style={{ display: "inline-block", fontSize: "10px", fontWeight: 700, color: "#4f46e5", background: "#e0e7ff", padding: "1px 6px", borderRadius: "4px", marginTop: "2px" }}>
+                                {u.roleName}
+                              </div>
+                            </div>
+                          </div>
+                          <span style={{
+                            fontSize: "10px",
+                            padding: "3px 10px",
+                            borderRadius: "9999px",
+                            fontWeight: 700,
+                            background: u.status === "ACTIVE" ? "#d1fae5" : "#fee2e2",
+                            color: u.status === "ACTIVE" ? "#065f46" : "#991b1b"
+                          }}>
+                            {u.status === "ACTIVE" ? "Actif" : "Inactif"}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="empty-state" style={{ padding: "60px 20px" }}>
+              <Building2 size={32} style={{ color: "#94a3b8", marginBottom: "12px" }} />
+              <p>Sélectionnez un établissement ci-dessus pour gérer ses comptes d'accès.</p>
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// COMPOSANT AUDIT LOGS PANEL
+// ═══════════════════════════════════════════════════════════════════════
+function AuditLogsPanel({
+  currentUser,
+  selectedEstablishmentId
+}: {
+  currentUser: AuthUser;
+  selectedEstablishmentId?: string;
+}) {
+  const isSuperAdmin = currentUser.roleCode === "platform_super_admin";
+  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [stats, setStats] = useState<AuditLogStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const limit = 30;
+  const [actionFilter, setActionFilter] = useState("");
+  const [searchEstabId, setSearchEstabId] = useState(selectedEstablishmentId ?? "");
+
+  useEffect(() => {
+    void loadLogs();
+    void loadStats();
+  }, [page, actionFilter, searchEstabId]);
+
+  async function loadLogs() {
+    setLoading(true);
+    try {
+      let result: PaginatedAuditLogs;
+      if (isSuperAdmin) {
+        result = await getAllAuditLogs({
+          establishmentId: searchEstabId || undefined,
+          action: actionFilter || undefined,
+          page,
+          limit
+        });
+      } else {
+        result = await getEstablishmentAuditLogs(selectedEstablishmentId ?? "", page, limit);
+      }
+      setLogs(result.data);
+      setTotal(result.total);
+    } catch {
+      setLogs([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadStats() {
+    try {
+      const s = await getAuditLogStats(isSuperAdmin ? (searchEstabId || undefined) : selectedEstablishmentId);
+      setStats(s);
+    } catch {
+      // silencieux
+    }
+  }
+
+  const actionBadgeColor = (action: string) => {
+    if (action.includes("LOGIN")) return { bg: "#dbeafe", color: "#1e40af" };
+    if (action.includes("CREATE")) return { bg: "#d1fae5", color: "#065f46" };
+    if (action.includes("UPDATE")) return { bg: "#fef3c7", color: "#92400e" };
+    if (action.includes("DELETE") || action.includes("DEACTIVATE")) return { bg: "#fee2e2", color: "#991b1b" };
+    if (action.includes("BACKUP")) return { bg: "#f3e8ff", color: "#7c3aed" };
+    if (action.includes("PASSWORD")) return { bg: "#fff7ed", color: "#c2410c" };
+    return { bg: "#f1f5f9", color: "#475569" };
+  };
+
+  const totalPages = Math.ceil(total / limit);
+
+  return (
+    <div className="panel animate-fade-in">
+      {/* En-tête */}
+      <div className="panel-header">
+        <div>
+          <h2 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <Activity size={20} />
+            Journal d'activité
+          </h2>
+          <span>Traçabilité complète des actions sensibles sur la plateforme</span>
+        </div>
+      </div>
+
+      {/* Statistiques rapides */}
+      {stats ? (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "12px", marginBottom: "20px" }}>
+          {[
+            { label: "Total", value: stats.total, color: "#4f46e5" },
+            { label: "Dernières 24h", value: stats.last24h, color: "#059669" },
+            { label: "Derniers 7 jours", value: stats.last7d, color: "#d97706" }
+          ].map(s => (
+            <div key={s.label} style={{
+              background: "var(--background-card)", border: "1px solid var(--line)",
+              borderRadius: "10px", padding: "14px 16px"
+            }}>
+              <p style={{ margin: 0, fontSize: "11px", color: "var(--text-muted)", textTransform: "uppercase" }}>{s.label}</p>
+              <p style={{ margin: "4px 0 0", fontSize: "22px", fontWeight: 700, color: s.color }}>{s.value.toLocaleString()}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Filtres */}
+      <div style={{ display: "flex", gap: "10px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
+        <select
+          value={actionFilter}
+          onChange={e => { setActionFilter(e.target.value); setPage(1); }}
+          style={{ padding: "6px 12px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "12px", minWidth: "180px" }}
+        >
+          <option value="">Toutes les actions</option>
+          <option value="LOGIN">Connexions</option>
+          <option value="USER_">Gestion utilisateurs</option>
+          <option value="BACKUP">Sauvegardes</option>
+          <option value="PASSWORD">Mots de passe</option>
+        </select>
+
+        <button
+          type="button"
+          className="ghost-button"
+          onClick={() => { void loadLogs(); void loadStats(); }}
+          style={{ height: "auto", padding: "6px 12px", fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" }}
+        >
+          <RefreshCw size={13} />
+          Actualiser
+        </button>
+
+        <span style={{ fontSize: "12px", color: "var(--text-muted)", marginLeft: "auto" }}>
+          {total} entrée(s) — page {page}/{totalPages || 1}
+        </span>
+      </div>
+
+      {/* Tableau des logs */}
+      {loading ? (
+        <div style={{ textAlign: "center", padding: "30px", color: "var(--text-muted)" }}>
+          <Loader2 size={24} className="animate-spin" />
+        </div>
+      ) : logs.length > 0 ? (
+        <div style={{ overflowX: "auto" }}>
+          <table className="data-table" style={{ fontSize: "12px", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ width: "16%" }}>Date</th>
+                <th style={{ width: "16%" }}>Action</th>
+                <th style={{ width: "12%" }}>Entité</th>
+                {isSuperAdmin ? <th style={{ width: "18%" }}>Établissement</th> : null}
+                <th style={{ width: "20%" }}>Utilisateur</th>
+                <th style={{ width: "18%" }}>Détails</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map(log => {
+                const badgeColors = actionBadgeColor(log.action);
+                return (
+                  <tr key={log.id} style={{ borderBottom: "1px solid var(--line)" }}>
+                    <td style={{ padding: "8px 6px", fontSize: "11px", color: "var(--text-muted)" }}>
+                      {new Date(log.createdAt).toLocaleString("fr-FR")}
+                    </td>
+                    <td style={{ padding: "8px 6px" }}>
+                      <span style={{
+                        fontSize: "10px", fontWeight: 600, padding: "2px 8px",
+                        borderRadius: "10px", background: badgeColors.bg, color: badgeColors.color,
+                        whiteSpace: "nowrap"
+                      }}>
+                        {log.action}
+                      </span>
+                    </td>
+                    <td style={{ padding: "8px 6px", fontSize: "11px", color: "var(--text-muted)" }}>
+                      {log.entityType}{log.entityId ? ` #${log.entityId.slice(0, 6)}` : ""}
+                    </td>
+                    {isSuperAdmin ? (
+                      <td style={{ padding: "8px 6px", fontSize: "11px" }}>
+                        {log.establishment?.name ?? (log.establishmentId ? log.establishmentId.slice(0, 8) + "..." : <em style={{ color: "var(--text-muted)" }}>Plateforme</em>)}
+                      </td>
+                    ) : null}
+                    <td style={{ padding: "8px 6px", fontSize: "11px" }}>
+                      {log.user?.fullName ?? log.user?.email ?? (log.userId ? log.userId.slice(0, 8) + "..." : <em style={{ color: "var(--text-muted)" }}>Système</em>)}
+                    </td>
+                    <td style={{ padding: "8px 6px", fontSize: "10px", color: "var(--text-muted)", fontFamily: "monospace" }}>
+                      {log.reason ?? (log.newValues ? JSON.stringify(log.newValues).slice(0, 60) + "..." : "-")}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="empty-state compact">Aucun log trouvé pour les filtres sélectionnés.</div>
+      )}
+
+      {/* Pagination */}
+      {totalPages > 1 ? (
+        <div style={{ display: "flex", justifyContent: "center", gap: "8px", marginTop: "16px" }}>
+          <button
+            type="button"
+            className="ghost-button"
+            disabled={page <= 1}
+            onClick={() => setPage(p => p - 1)}
+            style={{ height: "auto", padding: "5px 12px", fontSize: "12px" }}
+          >
+            ← Précédent
+          </button>
+          <span style={{ padding: "5px 12px", fontSize: "12px", color: "var(--text-muted)" }}>
+            {page} / {totalPages}
+          </span>
+          <button
+            type="button"
+            className="ghost-button"
+            disabled={page >= totalPages}
+            onClick={() => setPage(p => p + 1)}
+            style={{ height: "auto", padding: "5px 12px", fontSize: "12px" }}
+          >
+            Suivant →
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

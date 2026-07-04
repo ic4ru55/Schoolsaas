@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { AuditLogsService } from "../audit-logs/audit-logs.service";
 import { AssignFeeItemDto } from "./dto/assign-fee-item.dto";
 import { CollectPaymentDto } from "./dto/collect-payment.dto";
 import { CreateFeeItemDto } from "./dto/create-fee-item.dto";
@@ -83,7 +84,11 @@ function normalizePayment(payment: any) {
 
 @Injectable()
 export class PaymentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLogs: AuditLogsService
+  ) {}
+
 
   private async resolveContext(establishmentId: string, academicYearId?: string) {
     const establishment = await this.prisma.establishment.findUnique({
@@ -650,7 +655,7 @@ export class PaymentsService {
 
     const collectedAmount = dto.amount;
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const assignments = await tx.studentFeeAssignment.findMany({
         where: {
           establishmentId,
@@ -769,5 +774,22 @@ export class PaymentsService {
 
       return normalizePayment(createdPayment);
     });
+
+    // Audit log — encaissement de paiement
+    await this.auditLogs.log({
+      establishmentId,
+      userId: null,
+      action: "PAYMENT_COLLECT",
+      entityType: "Payment",
+      entityId: result.id,
+      newValues: {
+        amount: result.amount,
+        method: result.method,
+        studentId: dto.studentId,
+        receiptNumber: result.receiptNumber
+      }
+    });
+
+    return result;
   }
 }

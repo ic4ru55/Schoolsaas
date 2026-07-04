@@ -48,4 +48,11 @@ export class UpdateEstablishmentDto extends PartialType(CreateEstablishmentDto) 
   @Min(2)
   @Max(10)
   studentMatriculePadding?: number;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^#[0-9a-fA-F]{6}$/, {
+    message: "La couleur du bulletin doit être un code hexadécimal valide (ex: #1e3a8a)."
+  })
+  reportCardColor?: string;
 }

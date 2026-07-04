@@ -90,6 +90,7 @@ model Establishment {
   studentMatriculeFormat     String       @default("{PREFIX}-{YEAR}-{SEQ}")
   studentMatriculeNextNumber Int          @default(1)
   studentMatriculePadding    Int          @default(4)
+  reportCardColor            String       @default("#1e3a8a")
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
   academicYears        AcademicYear[]
